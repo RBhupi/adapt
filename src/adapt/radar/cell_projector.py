@@ -8,9 +8,9 @@ from scipy.spatial import Delaunay
 from scipy.ndimage import binary_dilation
 
 logger = logging.getLogger(__name__)
-# TODO: Implement other projection methods in future.
 
-
+# @TODO: When the cells are tiny, the qhull fails. We can use convex hull instead. 
+# @TODO: Decide the threshold by analyzing the cell sizes in the dataset.
 
 
 class RadarCellProjector:
