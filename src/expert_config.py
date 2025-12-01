@@ -92,9 +92,9 @@ PIPELINE_CONFIG: Dict = {
         "basemap_alpha": 0.6,
         
         # Contour styling
-        "seg_linewidth": 1.0,  # Segmentation contour width
-        "proj_linewidth": 0.8,  # Projection contour width
-        "proj_alpha": 0.6,  # Projection contour transparency
+        "seg_linewidth": 0.8,  # Segmentation contour width
+        "proj_linewidth": 1.0,  # Projection contour width
+        "proj_alpha": 0.8,  # Projection contour transparency
         
         # Flow vector styling
         "flow_scale": 0.5,  # Lower = larger arrows (15-40 for long arrows)
