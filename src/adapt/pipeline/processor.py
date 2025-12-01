@@ -4,7 +4,7 @@
 Receives radar filepaths from queue, processes through the pipeline:
 read → regrid → segment →  project → analyze → save
 
-@TODO: break process_file into smaller hierarchical functions.
+@TODO: NEed to simplify the logic.
 
 Author: Bhupendra Raut
 """
@@ -152,230 +152,182 @@ class RadarProcessor(threading.Thread):
         """Check if processor should stop."""
         return self._stop_event.is_set()
 
+
     def process_file(self, filepath: str) -> bool:
-        """Process a single radar file through the full pipeline.
-
-        Parameters
-        ----------
-        filepath : str
-            Path to Level-II radar file.
-
-        Returns
-        -------
-        success : bool
-            True if processing succeeded, False otherwise.
-        """
+        """Process a single radar file through the full pipeline."""
         try:
-            # Extract path from dict if needed
+            # Step 0: Handle dict input and check tracker for completed/plotting
             if isinstance(filepath, dict):
                 filepath = filepath["path"]
-
-            # Check if file is already fully processed (skip re-processing)
             file_id = Path(filepath).stem
             tracker = self.config.get("file_tracker")
             if tracker and tracker.should_process(file_id, "analyzed") is False:
-                # File already analyzed - check if plotting is also done
                 if tracker.should_process(file_id, "plotted") is False:
                     logger.info("⏭️  Skipping already completed: %s", Path(filepath).name)
                     return True
                 else:
-                    # Re-queue for plotting only (load existing analysis file)
-                    logger.info("📊 Already analyzed, re-queuing for plot: %s", Path(filepath).name)
-                    # Find the analysis file and queue it for plotting
-                    output_dirs = self.config.get("output_dirs", {})
-                    radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-                    if output_dirs and self.output_queue:
-                        from adapt.setup_directories import get_analysis_path
-                        from datetime import datetime
-                        try:
-                            parts = file_id.split('_')
-                            datetime_str = parts[0][-8:] + parts[1]
-                            scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-                        except:
-                            scan_time = datetime.now()
-
-                        seg_nc_path = get_analysis_path(
-                            output_dirs=output_dirs,
-                            radar_id=radar_id,
-                            analysis_type="segmentation",
-                            timestamp=scan_time,
-                            filename=f"{file_id}_analysis.nc"
-                        )
-                        if seg_nc_path.exists():
-                            try:
-                                item = {
-                                    'segmentation_nc': seg_nc_path,
-                                    'gridnc_file': None,
-                                    'radar_id': radar_id,
-                                    'timestamp': scan_time,
-                                }
-                                self.output_queue.put_nowait(item)
-                                logger.debug("Re-queued for plotting: %s", seg_nc_path.name)
-                            except queue.Full:
-                                pass
+                    self._requeue_for_plotting(file_id, filepath)
                     return True
 
             logger.info("Processing: %s", Path(filepath).name)
 
-            # ================================================================
-            # STEP 1: Load and Regrid (or load existing NetCDF)
-            # ================================================================
-            grid_kwargs = get_grid_kwargs()
-            save_netcdf = self.config.get("regridder", {}).get("save_netcdf", True)
-
-            # Determine NetCDF path
-            output_dirs = self.config.get("output_dirs")
-            nc_full_path = None
-            if output_dirs:
-                from adapt.setup_directories import get_netcdf_path
-                from datetime import datetime
-
-                radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-                nc_filename = Path(filepath).stem
-
-                # Extract scan_time from filename (e.g., KDIX20251127_040228_V06)
-                try:
-                    parts = nc_filename.split('_')
-                    datetime_str = parts[0][-8:] + parts[1]  # YYYYMMDD + HHMMSS
-                    scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-                except:
-                    scan_time = datetime.now()
-
-                nc_full_path = get_netcdf_path(output_dirs, radar_id, nc_filename, scan_time=scan_time)
-                output_dir = str(nc_full_path.parent)
-            else:
-                output_dir = self.config.get("downloader", {}).get("output_dir")
-
-            # Check if regridded NetCDF already exists
-            ds = None
-            if nc_full_path and nc_full_path.exists() and nc_full_path.stat().st_size > 1000:
-                # NetCDF exists → load it via PyART to preserve Grid structure
-                try:
-                    import pyart
-                    grid = pyart.io.read_grid(str(nc_full_path))
-                    ds = grid.to_xarray()
-                    logger.debug("Loaded existing NetCDF: %s", nc_full_path.name)
-                except Exception as e:
-                    logger.warning("Failed to load existing NetCDF %s: %s", nc_full_path.name, e)
-                    ds = None  # Fall through to regridding
-
-            # If NetCDF doesn't exist or failed to load → regrid from NEXRAD
-            if ds is None:
-                ds = self.loader.load_and_regrid(filepath, grid_kwargs=grid_kwargs,
-                                                save_netcdf=save_netcdf, output_dir=output_dir)
-
-            if ds is None:
+            # Step 1: Load and regrid
+            ds, ds_2d, nc_full_path, scan_time = self._load_and_regrid(filepath)
+            if ds is None or ds_2d is None:
                 logger.warning("Failed to load/regrid: %s", filepath)
                 return False
 
-            logger.debug("Loaded and regridded: %s", Path(filepath).name)
-
-            # ================================================================
-            # STEP 1.5: Extract 2D slice at z-level
-            # ================================================================
-            # From this point forward, we work with 2D data only
-            ds_2d = self._extract_2d_slice(ds)
-            logger.debug(f"Extracted 2D slice at z-level, shape: {ds_2d.dims}")
-
-            # ================================================================
-            # STEP 2: Segment Cells (2D)
-            # ================================================================
-            ds_2d = self.segmenter.segment(ds_2d)
-
-            var_names = self.config.get("global", {}).get("var_names", {})
-            labels_name = var_names.get("cell_labels", "cell_labels")
-
-            if labels_name not in ds_2d.data_vars:
+            # Step 2: Segment and save (return updated ds_2d)
+            ds_2d, seg_nc_path, num_cells = self._segment_and_save(ds_2d, filepath, scan_time)
+            if num_cells is None:
                 logger.warning("Segmentation failed for: %s", filepath)
                 return False
 
-            num_cells = int(ds_2d[labels_name].max().item())
-            logger.info("Segmented: %d cells", num_cells)
-
-            # Save segmentation NetCDF for visualization
-            seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath)
-
-            # Push to plotter queue if available (use scan_time, not current time)
-            if seg_nc_path and self.output_queue:
-                try:
-                    item = {
-                        'segmentation_nc': seg_nc_path,
-                        'gridnc_file': None,  # Could add regridded gridnc path if desired
-                        'radar_id': self.config.get("downloader", {}).get("radar_id", "UNKNOWN"),
-                        'timestamp': scan_time,  # Use scan time for proper date organization
-                    }
-                    self.output_queue.put_nowait(item)
-                    logger.debug(f"Pushed segmentation to plotter queue: {seg_nc_path}")
-                except queue.Full:
-                    logger.debug("Plotter queue full, skipping frame")
-
-            # ================================================================
-            # STEP 3: Analyze Cells (2D)
-            # ================================================================
-            z_level = self.config.get("global", {}).get("z_level", 2000)
-            df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
-
-            # Update tracker for regridded stage (do this before early return)
-            tracker = self.config.get("file_tracker")
-            file_id = Path(filepath).stem
-            if tracker and nc_full_path:
-                tracker.mark_stage_complete(file_id, "regridded", path=nc_full_path)
-
-            # Skip if no cells detected (but still mark as analyzed with 0 cells)
-            if df_cells.empty:
-                logger.debug("No cells detected in: %s", Path(filepath).name)
-                if tracker:
-                    tracker.mark_stage_complete(file_id, "analyzed", num_cells=0)
-                return True
-
-            # Add metadata
-            df_cells["filepath"] = str(filepath)  # Convert Path to string for Parquet compatibility
-            df_cells["timestamp"] = pd.Timestamp.now()
-
-            # Add centroids
-            var_names = self.config.get("global", {}).get("var_names", {})
-            labels_name = var_names.get("cell_labels", "cell_labels")
-            labels = ds_2d[labels_name].values
-            centroids = compute_all_cell_centroids(labels)
-            df_cells["centroid_y"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[0])
-            df_cells["centroid_x"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[1])
-
-            logger.debug("Analyzed: %d cells with properties", len(df_cells))
-
-            # Log detailed cell statistics
-            self._log_cell_statistics(df_cells)
-
-            # ================================================================
-            # STEP 4: Insert into SQLite database
-            # ================================================================
-            with self.output_lock:
-                # On first insert, create table schema from DataFrame
-                if not self.db_initialized:
-                    df_cells.to_sql('cells', self.db_conn, if_exists='replace', index=False)
-                    self._create_indexes()
-                    self.db_initialized = True
-                    logger.info("📊 Database schema created from first DataFrame")
-                else:
-                    df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
-
-            logger.info("✓ Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
-
-            # Update tracker for analyzed stage (regridded was updated earlier)
-            if tracker:
-                tracker.mark_stage_complete(file_id, "analyzed", num_cells=len(df_cells))
-
-            return True
+            # Step 3: Analyze and save (use updated ds_2d)
+            result = self._analyze_and_save(ds_2d, filepath, nc_full_path, seg_nc_path, num_cells, scan_time)
+            return result
 
         except Exception as e:
             logger.exception("Error processing %s", filepath)
-
-            # Mark as failed in tracker
             tracker = self.config.get("file_tracker")
             if tracker:
                 file_id = Path(filepath).stem
                 tracker.mark_stage_complete(file_id, "analyzed", error=str(e))
-
             return False
+
+    def _requeue_for_plotting(self, file_id, filepath):
+        logger.info("📊 Already analyzed, re-queuing for plot: %s", Path(filepath).name)
+        output_dirs = self.config.get("output_dirs", {})
+        radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
+        if output_dirs and self.output_queue:
+            from adapt.setup_directories import get_analysis_path
+            from datetime import datetime
+            try:
+                parts = file_id.split('_')
+                datetime_str = parts[0][-8:] + parts[1]
+                scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
+            except:
+                scan_time = datetime.now()
+            seg_nc_path = get_analysis_path(
+                output_dirs=output_dirs,
+                radar_id=radar_id,
+                analysis_type="segmentation",
+                timestamp=scan_time,
+                filename=f"{file_id}_analysis.nc"
+            )
+            if seg_nc_path.exists():
+                try:
+                    item = {
+                        'segmentation_nc': seg_nc_path,
+                        'gridnc_file': None,
+                        'radar_id': radar_id,
+                        'timestamp': scan_time,
+                    }
+                    self.output_queue.put_nowait(item)
+                    logger.debug("Re-queued for plotting: %s", seg_nc_path.name)
+                except queue.Full:
+                    pass
+
+    def _load_and_regrid(self, filepath):
+        """Load and regrid radar file, return ds, ds_2d, nc_full_path, scan_time."""
+        grid_kwargs = get_grid_kwargs()
+        save_netcdf = self.config.get("regridder", {}).get("save_netcdf", True)
+        output_dirs = self.config.get("output_dirs")
+        nc_full_path = None
+        scan_time = None
+        if output_dirs:
+            from adapt.setup_directories import get_netcdf_path
+            from datetime import datetime
+            radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
+            nc_filename = Path(filepath).stem
+            try:
+                parts = nc_filename.split('_')
+                datetime_str = parts[0][-8:] + parts[1]
+                scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
+            except:
+                scan_time = datetime.now()
+            nc_full_path = get_netcdf_path(output_dirs, radar_id, nc_filename, scan_time=scan_time)
+            output_dir = str(nc_full_path.parent)
+        else:
+            output_dir = self.config.get("downloader", {}).get("output_dir")
+        ds = None
+        if nc_full_path and nc_full_path.exists() and nc_full_path.stat().st_size > 1000:
+            try:
+                import pyart
+                grid = pyart.io.read_grid(str(nc_full_path))
+                ds = grid.to_xarray()
+                logger.debug("Loaded existing NetCDF: %s", nc_full_path.name)
+            except Exception as e:
+                logger.warning("Failed to load existing NetCDF %s: %s", nc_full_path.name, e)
+                ds = None
+        if ds is None:
+            ds = self.loader.load_and_regrid(filepath, grid_kwargs=grid_kwargs,
+                                            save_netcdf=save_netcdf, output_dir=output_dir)
+        if ds is None:
+            return None, None, nc_full_path, scan_time
+        ds_2d = self._extract_2d_slice(ds)
+        logger.debug(f"Extracted 2D slice at z-level, shape: {ds_2d.dims}")
+        return ds, ds_2d, nc_full_path, scan_time
+
+    def _segment_and_save(self, ds_2d, filepath, scan_time):
+        """Segment cells, save segmentation NetCDF, push to plotter queue. Returns updated ds_2d."""
+        ds_2d = self.segmenter.segment(ds_2d)
+        var_names = self.config.get("global", {}).get("var_names", {})
+        labels_name = var_names.get("cell_labels", "cell_labels")
+        if labels_name not in ds_2d.data_vars:
+            return ds_2d, None, None
+        num_cells = int(ds_2d[labels_name].max().item())
+        logger.info("Segmented: %d cells", num_cells)
+        seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath)
+        if seg_nc_path and self.output_queue:
+            try:
+                item = {
+                    'segmentation_nc': seg_nc_path,
+                    'gridnc_file': None,
+                    'radar_id': self.config.get("downloader", {}).get("radar_id", "UNKNOWN"),
+                    'timestamp': scan_time,
+                }
+                self.output_queue.put_nowait(item)
+                logger.debug(f"Pushed segmentation to plotter queue: {seg_nc_path}")
+            except queue.Full:
+                logger.debug("Plotter queue full, skipping frame")
+        return ds_2d, seg_nc_path, num_cells
+
+    def _analyze_and_save(self, ds_2d, filepath, nc_full_path, seg_nc_path, num_cells, scan_time):
+        """Analyze cells, update tracker, insert into SQLite DB."""
+        z_level = self.config.get("global", {}).get("z_level", 2000)
+        df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
+        tracker = self.config.get("file_tracker")
+        file_id = Path(filepath).stem
+        if tracker and nc_full_path:
+            tracker.mark_stage_complete(file_id, "regridded", path=nc_full_path)
+        if df_cells.empty:
+            logger.debug("No cells detected in: %s", Path(filepath).name)
+            if tracker:
+                tracker.mark_stage_complete(file_id, "analyzed", num_cells=0)
+            return True
+        df_cells["filepath"] = str(filepath)
+        df_cells["timestamp"] = pd.Timestamp.now()
+        var_names = self.config.get("global", {}).get("var_names", {})
+        labels_name = var_names.get("cell_labels", "cell_labels")
+        labels = ds_2d[labels_name].values
+        centroids = compute_all_cell_centroids(labels)
+        df_cells["centroid_y"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[0])
+        df_cells["centroid_x"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[1])
+        logger.debug("Analyzed: %d cells with properties", len(df_cells))
+        self._log_cell_statistics(df_cells)
+        with self.output_lock:
+            if not self.db_initialized:
+                df_cells.to_sql('cells', self.db_conn, if_exists='replace', index=False)
+                self._create_indexes()
+                self.db_initialized = True
+                logger.info("📊 Database schema created from first DataFrame")
+            else:
+                df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
+        logger.info("✓ Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
+        if tracker:
+            tracker.mark_stage_complete(file_id, "analyzed", num_cells=len(df_cells))
+        return True
 
     def run(self):
         """Main processor loop: read queue, process files."""
@@ -400,7 +352,6 @@ class RadarProcessor(threading.Thread):
 
         logger.info("Processor stopped")
 
-    # ...existing code...
 
     def get_results(self) -> pd.DataFrame:
         """Get accumulated results as DataFrame (thread-safe).
