@@ -2,9 +2,6 @@
 
 Manages the multi-threaded radar processing pipeline.
 
-@TODO: Orchestrator won't stop the downloader in historical mode when all files are processed.
-Shows this 2025-12-01 09:23:07 - adapt.pipeline.orchestrator - INFO - Status: D=✗ P=✓ L=✓ Q=0 PQ=0
-
 Author: Bhupendra Raut
 """
 
@@ -204,6 +201,13 @@ class PipelineOrchestrator:
 
         processed, expected = self.downloader.get_historical_progress()
         logger.info("📦 Downloader complete: %d/%d files queued", processed, expected)
+
+        # Stop downloader explicitly to signal thread termination
+        self.downloader.stop()
+        logger.info("Stopping downloader thread...")
+        self.downloader.join(timeout=5)
+        if self.downloader.is_alive():
+            logger.warning("Downloader thread did not stop cleanly")
 
         # Wait for queues to drain
         self._drain_queue(self.downloader_queue, "processor")
