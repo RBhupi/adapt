@@ -178,7 +178,7 @@ class RadarPlotter:
         """Add colorbar to axis."""
         cbar = plt.colorbar(im, ax=ax, label='Reflectivity (dBZ)', fraction=0.046, pad=0.04)
     
-    def _plot_flow_vectors(
+    def _plot_heading_yectors(
         self,
         ax: plt.Axes,
         ds: xr.Dataset,
@@ -186,16 +186,16 @@ class RadarPlotter:
         y_coords: np.ndarray
     ) -> bool:
         """Plot optical flow arrows on Panel 1."""
-        flow_u_name = self._get_var_name("flow_u", "flow_u")
-        flow_v_name = self._get_var_name("flow_v", "flow_v")
+        heading_x_name = self._get_var_name("heading_x", "heading_x")
+        heading_y_name = self._get_var_name("heading_y", "heading_y")
         
-        if flow_u_name not in ds.data_vars or flow_v_name not in ds.data_vars:
+        if heading_x_name not in ds.data_vars or heading_y_name not in ds.data_vars:
             return False
         
-        flow_u = ds[flow_u_name].values
-        flow_v = ds[flow_v_name].values
+        heading_x = ds[heading_x_name].values
+        heading_y = ds[heading_y_name].values
         
-        if np.all(np.isnan(flow_u)):
+        if np.all(np.isnan(heading_x)):
             logger.debug("Optical flow not plotted (all NaN - first frame)")
             return False
         
@@ -205,8 +205,8 @@ class RadarPlotter:
         
         Y_sub = y_coords[y_indices]
         X_sub = x_coords[x_indices]
-        U_sub = flow_u[np.ix_(y_indices, x_indices)]
-        V_sub = flow_v[np.ix_(y_indices, x_indices)]
+        U_sub = heading_x[np.ix_(y_indices, x_indices)]
+        V_sub = heading_y[np.ix_(y_indices, x_indices)]
         
         X_mesh, Y_mesh = np.meshgrid(X_sub, Y_sub)
         
@@ -402,7 +402,7 @@ class RadarPlotter:
         self._add_colorbar(ax1, im1)
         self._add_basemap(ax1, ds, x_coords, y_coords)
         
-        flow_plotted = self._plot_flow_vectors(ax1, ds, x_coords, y_coords)
+        flow_plotted = self._plot_heading_yectors(ax1, ds, x_coords, y_coords)
         
         self._format_axis(ax1, 'Reflectivity + Motion Vectors', timestamp, radar_id)
         

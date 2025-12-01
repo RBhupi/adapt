@@ -127,17 +127,17 @@ class RadarCellProjector:
             )
             
             # Also store flow field
-            ds_out["flow_u"] = xr.DataArray(
+            ds_out["heading_x"] = xr.DataArray(
                 flow[:, :, 0].astype(np.float32),
                 dims=["y", "x"],
                 coords={"y": ds_out.y, "x": ds_out.x},
-                attrs={"units": "pixels/frame", "description": "Optical flow U component"}
+                attrs={"units": "pixels/frame", "description": "Heading in x direction"}
             )
-            ds_out["flow_v"] = xr.DataArray(
+            ds_out["heading_y"] = xr.DataArray(
                 flow[:, :, 1].astype(np.float32),
                 dims=["y", "x"],
                 coords={"y": ds_out.y, "x": ds_out.x},
-                attrs={"units": "pixels/frame", "description": "Optical flow V component"}
+                attrs={"units": "pixels/frame", "description": "heading in y direction"}
             )
             
             logger.info(f"✓ Added cell_projections with {len(labels_proj_list)} projection steps")
