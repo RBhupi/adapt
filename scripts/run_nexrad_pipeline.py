@@ -113,6 +113,7 @@ def main():
     parser.add_argument("--mode", choices=["realtime", "historical"], help="Override mode")
     parser.add_argument("--start", help="Start time (ISO format)")
     parser.add_argument("--end", help="End time (ISO format)")
+    parser.add_argument("--outdir", help="Output directory")
     parser.add_argument("--max-runtime", type=int, help="Max runtime in minutes (realtime)")
     parser.add_argument("--rerun", action="store_true", help="Delete output directories before running")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
@@ -131,6 +132,8 @@ def main():
         config["downloader"]["start_time"] = args.start
     if args.end:
         config["downloader"]["end_time"] = args.end
+    if args.outdir:
+        config["base_dir"] = args.outdir
     if args.verbose:
         config["logging"]["level"] = "DEBUG"
     
