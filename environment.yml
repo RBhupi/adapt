@@ -12,9 +12,11 @@ dependencies:
   - matplotlib
   - cartopy
   - netCDF4
-  - nexradaws
   - tqdm
   - h5py
   - pip
   - pip:
       - opencv-python
+      - nexradaws
+      - contextily
+      - pyproj

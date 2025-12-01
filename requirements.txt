@@ -7,6 +7,8 @@ scikit-image
 matplotlib
 cartopy
 netCDF4
-nexradaws
 tqdm
 h5py
+nexradaws
+contextily
+pyproj
