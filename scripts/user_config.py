@@ -50,8 +50,7 @@ CONFIG = {
     "SEGMENTATION_METHOD": "threshold",
     "THRESHOLD_DBZ": 30,      # Cell detection threshold
     "MIN_CELL_SIZE": 5,       # Minimum cell size (grid points)
-    "MAX_CELL_SIZE": None,    # Maximum cell size (None = no limit)
-
+    "MAX_CELL_SIZE": None,    # Maximum cell size (None = no limit)    
     # ========================================================================
     # PROJECTION SETTINGS
     # ========================================================================
