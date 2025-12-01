@@ -31,8 +31,22 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 def compute_time_interval(ds1: xr.Dataset, ds2: xr.Dataset, units: str = 'seconds') -> float:
-    # ...existing code or placeholder...
-    pass
+    """Calculate time difference between two xarray Datasets.
+    
+    Parameters
+    ----------
+    ds1, ds2 : xr.Dataset
+        Datasets with 'time' coordinate.
+    units : str
+        Time unit: 'seconds', 'minutes', 'hours', etc.
+    
+    Returns
+    -------
+    float
+        Time interval in specified units.
+    """
+    # TODO: Implement time interval calculation from dataset coordinates
+    raise NotImplementedError("compute_time_interval not yet implemented")
 
 
 def compute_cell_centroid(label_array: np.ndarray, label_id: int, weighted_by: np.ndarray = None) -> Optional[Tuple[float, float]]:

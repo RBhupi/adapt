@@ -55,20 +55,19 @@ class RadarCellAnalyzer:
         )
 
     def extract(self, ds: xr.Dataset, z_level: int = None) -> pd.DataFrame:
-        """Extract cell properties from a labeled 2D dataset.
+        """Extract centroid and statistics from labeled cells.
 
         Parameters
         ----------
         ds : xr.Dataset
-            2D dataset (already sliced at z-level) with cell_labels from segmenter 
-            and optionally heading_x/heading_y from projector.
+            2D segmented dataset with cell_labels, reflectivity, and optional flow fields.
         z_level : int, optional
-            Analysis altitude in meters (not used, kept for compatibility).
+            Unused; kept for API compatibility.
 
         Returns
         -------
         pd.DataFrame
-            Cell properties with columns: cell_id, area_km2, lat/lon, field statistics.
+            Cell properties: cell_label, centroids (geom/mass/maxdbz with x/y/lat/lon), area, radar stats.
         """
         # Get settings from config
         global_cfg = self._global_config
@@ -174,12 +173,12 @@ class RadarCellAnalyzer:
         # === GEOMETRIC CENTROID (center of mass of binary mask) ===
         centroid_geom_y, centroid_geom_x = center_of_mass(mask.astype(float))
         lat_geom, lon_geom = self.get_lat_lon(
-            int(centroid_geom_x), int(centroid_geom_y), lat_grid, lon_grid
+            int(np.round(centroid_geom_x)), int(np.round(centroid_geom_y)), lat_grid, lon_grid
         )
 
         # === MAX REFLECTIVITY CENTROID ===
-        centroid_maxdbz_y = float(max_coord[0])
-        centroid_maxdbz_x = float(max_coord[1])
+        centroid_maxdbz_y = int(np.round(max_coord[0]))
+        centroid_maxdbz_x = int(np.round(max_coord[1]))
         lat_maxdbz = float(lat_grid[tuple(max_coord)])
         lon_maxdbz = float(lon_grid[tuple(max_coord)])
 
@@ -190,32 +189,32 @@ class RadarCellAnalyzer:
             # Use only finite values for weighting
             valid_mask = np.isfinite(refl_cell)
             if np.any(valid_mask):
-                centroid_mass_y = float(np.average(y_indices[valid_mask], weights=refl_cell[valid_mask]))
-                centroid_mass_x = float(np.average(x_indices[valid_mask], weights=refl_cell[valid_mask]))
+                centroid_mass_y = int(np.round(np.average(y_indices[valid_mask], weights=refl_cell[valid_mask])))
+                centroid_mass_x = int(np.round(np.average(x_indices[valid_mask], weights=refl_cell[valid_mask])))
             else:
-                centroid_mass_y, centroid_mass_x = centroid_geom_y, centroid_geom_x
+                centroid_mass_y, centroid_mass_x = int(np.round(centroid_geom_y)), int(np.round(centroid_geom_x))
         else:
-            centroid_mass_y, centroid_mass_x = centroid_geom_y, centroid_geom_x
+            centroid_mass_y, centroid_mass_x = int(np.round(centroid_geom_y)), int(np.round(centroid_geom_x))
 
         lat_mass, lon_mass = self.get_lat_lon(
-            int(centroid_mass_x), int(centroid_mass_y), lat_grid, lon_grid
+            centroid_mass_x, centroid_mass_y, lat_grid, lon_grid
         )
 
         props = {
-            "cell_id": int(region.label),
+            "cell_label": int(region.label),
             "cell_area_sqkm": float(region.area * pixel_area_km2),
-            "cell_centroid_geom_x": float(centroid_geom_x),
-            "cell_centroid_geom_y": float(centroid_geom_y),
-            "cell_centroid_geom_lat": lat_geom,
-            "cell_centroid_geom_lon": lon_geom,
-            "cell_centroid_maxdbz_x": float(centroid_maxdbz_x),
-            "cell_centroid_maxdbz_y": float(centroid_maxdbz_y),
+            "cell_centroid_geom_x": int(np.round(centroid_geom_x)),
+            "cell_centroid_geom_y": int(np.round(centroid_geom_y)),
+            "cell_centroid_geom_lat": float(lat_geom),
+            "cell_centroid_geom_lon": float(lon_geom),
+            "cell_centroid_maxdbz_x": centroid_maxdbz_x,
+            "cell_centroid_maxdbz_y": centroid_maxdbz_y,
             "cell_centroid_maxdbz_lat": lat_maxdbz,
             "cell_centroid_maxdbz_lon": lon_maxdbz,
-            "cell_centroid_mass_x": float(centroid_mass_x),
-            "cell_centroid_mass_y": float(centroid_mass_y),
-            "cell_centroid_mass_lat": lat_mass,
-            "cell_centroid_mass_lon": lon_mass,
+            "cell_centroid_mass_x": centroid_mass_x,
+            "cell_centroid_mass_y": centroid_mass_y,
+            "cell_centroid_mass_lat": float(lat_mass),
+            "cell_centroid_mass_lon": float(lon_mass),
             "scan_start_time": scan_time,
         }
 

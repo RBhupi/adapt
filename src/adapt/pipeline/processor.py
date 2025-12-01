@@ -108,35 +108,54 @@ class RadarProcessor(threading.Thread):
         output_dirs = self.config.get("output_dirs", {})
         radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
 
-        if output_dirs:
-            # Store at radar level, not date level
-            # This ensures persistence across runs and date boundaries
-            analysis_dir = Path(output_dirs.get("analysis", "."))
-            analysis_dir.mkdir(parents=True, exist_ok=True)
-            db_filename = f"{radar_id}_cells_statistics.db"
-            return analysis_dir / db_filename
-        else:
-            # Fallback for old configs
-            db_dir = Path(self.config.get("working_dir", ".")) / "analysis"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            return db_dir / f"{radar_id}_cells.db"
+        analysis_dir = Path(output_dirs.get("analysis", "."))
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        db_filename = f"{radar_id}_cells_statistics.db"
+        return analysis_dir / db_filename
 
     def _init_database(self):
         """Initialize SQLite database (schema created on first insert)."""
         self.db_conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.db_initialized = False
-        logger.info(f"📊 SQLite database initialized: {self.db_path}")
+        logger.info(f"Database initialized: {self.db_path}")
 
-    def _create_indexes(self):
-        """Create indexes after table creation."""
-        try:
-            self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON cells(timestamp)")
-            self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_cell_id ON cells(cell_id)")
-            self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_filepath ON cells(filepath)")
-            self.db_conn.commit()
-            logger.debug("Created database indexes")
-        except Exception as e:
-            logger.warning(f"Failed to create indexes: {e}")
+    def _create_cells_table(self, df_cells: pd.DataFrame):
+        """Create cells table with explicit schema and composite primary key."""
+        # Map column names to SQLite types
+        type_map = {
+            "cell_label": "INTEGER NOT NULL",
+            "scan_start_time": "TIMESTAMP NOT NULL",
+            "cell_area_sqkm": "REAL",
+        }
+        
+        col_defs = []
+        for col in df_cells.columns:
+            if col in type_map:
+                col_defs.append(f'"{col}" {type_map[col]}')
+            elif col.endswith("_x") or col.endswith("_y"):
+                # Centroid coordinates are INTEGER
+                col_defs.append(f'"{col}" INTEGER')
+            elif col.endswith("_lat") or col.endswith("_lon"):
+                # Latitude/longitude are REAL
+                col_defs.append(f'"{col}" REAL')
+            elif col.startswith("radar_"):
+                # Radar field statistics are REAL
+                col_defs.append(f'"{col}" REAL')
+            else:
+                # Everything else as TEXT
+                col_defs.append(f'"{col}" TEXT')
+        
+        col_defs_str = ",\n    ".join(col_defs)
+        create_sql = f"""
+        CREATE TABLE IF NOT EXISTS cells (
+            {col_defs_str},
+            PRIMARY KEY (scan_start_time, cell_label)
+        )
+        """
+        self.db_conn.execute(create_sql)
+        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_scan_time ON cells(scan_start_time)")
+        self.db_conn.commit()
+        logger.info("📊 Database schema created with composite primary key (scan_start_time, cell_label)")
 
     def stop(self):
         """Signal processor to stop gracefully."""
@@ -196,7 +215,7 @@ class RadarProcessor(threading.Thread):
             return False
 
     def _requeue_for_plotting(self, file_id, filepath):
-        logger.info("📊 Already analyzed, re-queuing for plot: %s", Path(filepath).name)
+        logger.info("Already analyzed, re-queuing for plot: %s", Path(filepath).name)
         output_dirs = self.config.get("output_dirs", {})
         radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
         if output_dirs and self.output_queue:
@@ -306,24 +325,21 @@ class RadarProcessor(threading.Thread):
             if tracker:
                 tracker.mark_stage_complete(file_id, "analyzed", num_cells=0)
             return True
-        df_cells["filepath"] = str(filepath)
-        df_cells["timestamp"] = pd.Timestamp.now()
-        var_names = self.config.get("global", {}).get("var_names", {})
-        labels_name = var_names.get("cell_labels", "cell_labels")
-        labels = ds_2d[labels_name].values
-        centroids = compute_all_cell_centroids(labels)
-        df_cells["centroid_y"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[0])
-        df_cells["centroid_x"] = df_cells["cell_id"].map(lambda cid: centroids.get(cid, (np.nan, np.nan))[1])
+
+        # Ensure scan_start_time is datetime for SQLite TIMESTAMP
+        if "scan_start_time" in df_cells.columns:
+            df_cells["scan_start_time"] = pd.to_datetime(df_cells["scan_start_time"])
+
         logger.debug("Analyzed: %d cells with properties", len(df_cells))
         self._log_cell_statistics(df_cells)
+        
         with self.output_lock:
             if not self.db_initialized:
-                df_cells.to_sql('cells', self.db_conn, if_exists='replace', index=False)
-                self._create_indexes()
+                self._create_cells_table(df_cells)
                 self.db_initialized = True
-                logger.info("📊 Database schema created from first DataFrame")
-            else:
-                df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
+            # Append data (schema already exists)
+            df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
+        
         logger.info("✓ Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
         if tracker:
             tracker.mark_stage_complete(file_id, "analyzed", num_cells=len(df_cells))
@@ -457,12 +473,12 @@ class RadarProcessor(threading.Thread):
             # Log individual cell details for small number of cells
             if num_cells <= 5:
                 for idx, row in df_cells.iterrows():
-                    cell_id = row.get("cell_id", "?")
-                    area = row.get("area_km2", np.nan)
-                    refl_mean = row.get("reflectivity_mean", np.nan)
-                    refl_max = row.get("reflectivity_max", np.nan)
+                    cell_label = row.get("cell_label", "?")
+                    area = row.get("cell_area_sqkm", np.nan)
+                    refl_mean = row.get("radar_reflectivity_mean", np.nan)
+                    refl_max = row.get("radar_reflectivity_max", np.nan)
 
-                    detail_msg = f"Cell #{cell_id}: area={area:.1f} km², refl_mean={refl_mean:.1f} dBZ, refl_max={refl_max:.1f} dBZ"
+                    detail_msg = f"Cell #{cell_label}: area={area:.1f} km², refl_mean={refl_mean:.1f} dBZ, refl_max={refl_max:.1f} dBZ"
                     logger.info("  └─ %s", detail_msg)
 
         except Exception as e:
@@ -608,274 +624,6 @@ class RadarProcessor(threading.Thread):
         except Exception as e:
             logger.warning(f"Could not save segmentation NetCDF: {e}")
             return None
-
-
-class MultiFileProcessor:
-    """Process multiple radar files sequentially (non-threaded).
-
-    Useful for batch processing historical data or testing.
-    """
-
-    def __init__(self, config: Dict = None):
-        """Initialize processor.
-
-        Parameters
-        ----------
-        config : dict, optional
-            Pipeline configuration.
-        """
-        self.config = config or PIPELINE_CONFIG
-
-        # Build sub-module configs with global section included
-        global_cfg = self.config.get("global", {})
-        segmenter_cfg = {**self.config.get("segmenter", {}), "global": global_cfg}
-        analyzer_cfg = {**self.config.get("analyzer", {}), "global": global_cfg}
-
-        # Initialize processing modules
-        self.loader = RadarDataLoader(self.config)
-        self.segmenter = RadarCellSegmenter(segmenter_cfg)
-        self.analyzer = RadarCellAnalyzer(analyzer_cfg)
-
-        # SQLite database connection
-        self.db_path = self._get_db_path()
-        self.db_conn = sqlite3.connect(str(self.db_path))
-        self.db_initialized = False
-        self._init_database()
-
-    def _get_db_path(self) -> Path:
-        """Get SQLite database path using YYYYMMDD/RADAR_ID structure."""
-        output_dirs = self.config.get("output_dirs", {})
-        radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-
-        if output_dirs:
-            # Use get_analysis_path for consistent structure
-            from adapt.setup_directories import get_analysis_path
-            from datetime import datetime
-
-            db_filename = f"{radar_id}_cells_statistics.db"
-            db_path = get_analysis_path(
-                output_dirs=output_dirs,
-                radar_id=radar_id,
-                analysis_type="db",
-                timestamp=datetime.now(),
-                filename=db_filename
-            )
-            return db_path
-        else:
-            # Fallback for old configs
-            db_dir = Path(self.config.get("working_dir", ".")) / "analysis"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            return db_dir / f"{radar_id}_cells.db"
-
-    def _init_database(self):
-        """Initialize SQLite database (schema created on first insert)."""
-        logger.info(f"📊 SQLite database initialized: {self.db_path}")
-
-    def process_files(self, filepaths: List[str]) -> pd.DataFrame:
-        """Process multiple files and accumulate results.
-
-        Parameters
-        ----------
-        filepaths : list of str
-            Paths to radar files.
-
-        Returns
-        -------
-        df : pd.DataFrame
-            Accumulated results.
-        """
-        for filepath in filepaths:
-            try:
-                logger.info("Processing: %s", Path(filepath).name)
-
-                # Load and regrid
-                grid_kwargs = get_grid_kwargs()
-                ds = self.loader.load_and_regrid(filepath, grid_kwargs=grid_kwargs)
-
-                if ds is None:
-                    logger.warning("Failed to load: %s", filepath)
-                    continue
-
-                # Extract 2D slice at z-level
-                ds_2d = self._extract_2d_slice(ds)
-
-                # Segment (2D)
-                ds_2d = self.segmenter.segment(ds_2d)
-
-                var_names = self.config.get("global", {}).get("var_names", {})
-                labels_name = var_names.get("cell_labels", "cell_labels")
-
-                if labels_name not in ds_2d.data_vars:
-                    logger.warning("Segmentation failed: %s", filepath)
-                    continue
-
-                # Analyze (2D)
-                z_level = self.config.get("global", {}).get("z_level", 2000)
-                df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
-
-                # Handle case when no cells detected
-                if df_cells.empty:
-                    logger.info("⚠️ No cells detected in %s, skipping", Path(filepath).name)
-                    continue
-
-                df_cells["filepath"] = filepath
-                df_cells["timestamp"] = pd.Timestamp.now()
-
-                # Add centroids
-                labels = ds_2d[labels_name].values
-                centroids = compute_all_cell_centroids(labels)
-                df_cells["centroid_y"] = df_cells["cell_id"].map(
-                    lambda cid: centroids.get(cid, (np.nan, np.nan))[0])
-                df_cells["centroid_x"] = df_cells["cell_id"].map(
-                    lambda cid: centroids.get(cid, (np.nan, np.nan))[1])
-
-                # Save segmentation NetCDF for visualization
-                seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath)
-
-                # Generate plot if visualization enabled
-                if self.config.get("visualization", {}).get("enabled", False) and seg_nc_path:
-                    self._generate_plot(seg_nc_path, filepath)
-
-                # Insert into database
-                if not self.db_initialized:
-                    df_cells.to_sql('cells', self.db_conn, if_exists='replace', index=False)
-                    self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON cells(timestamp)")
-                    self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_cell_id ON cells(cell_id)")
-                    self.db_conn.commit()
-                    self.db_initialized = True
-                    logger.info("📊 Database schema created from first DataFrame")
-                else:
-                    df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
-                logger.info("✓ Processed: %s (%d cells)", Path(filepath).name, len(df_cells))
-
-            except Exception as e:
-                logger.exception("Error processing %s", filepath)
-                continue
-
-        # Return all results from database
-        return pd.read_sql("SELECT * FROM cells", self.db_conn)
-
-    def save_results(self, filepath: str = None):
-        """Export results to Parquet.
-
-        Parameters
-        ----------
-        filepath : str, optional
-            Output filepath. If None, uses config-derived path.
-        """
-        if filepath is None:
-            filepath = get_output_path()
-
-        try:
-            filepath = Path(filepath)
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-
-            cursor = self.db_conn.execute("SELECT COUNT(*) FROM cells")
-            count = cursor.fetchone()[0]
-
-            if count > 0:
-                df = pd.read_sql("SELECT * FROM cells", self.db_conn)
-                df.to_parquet(filepath, engine='pyarrow',
-                              compression=self.config["output"]["compression"],
-                              index=False)
-                logger.info("Exported %d rows to: %s", count, filepath)
-            else:
-                logger.warning("No results to export")
-
-        except Exception as e:
-            logger.exception("Failed to export results")
-
-    def _extract_2d_slice(self, ds: xr.Dataset) -> xr.Dataset:
-        """Extract 2D slice at configured z-level (shared with RadarProcessor)."""
-        global_cfg = self.config.get("global", {})
-        z_level = global_cfg.get("z_level", 2000)
-        coord_names = global_cfg.get("coord_names", {})
-        time_name = coord_names.get("time", "time")
-        z_name = coord_names.get("z", "z")
-        
-        z_idx = int(np.argmin(np.abs(ds[z_name].values - z_level)))
-        
-        ds_2d = xr.Dataset()
-        for var_name in ds.data_vars:
-            var = ds[var_name]
-            if time_name in var.dims and z_name in var.dims:
-                ds_2d[var_name] = var.isel({time_name: 0, z_name: z_idx})
-            else:
-                ds_2d[var_name] = var
-        
-        ds_2d = ds_2d.assign_coords({"y": ds.y, "x": ds.x})
-        ds_2d.attrs.update(ds.attrs)
-        ds_2d.attrs["z_level_m"] = float(ds[z_name].values[z_idx])
-        
-        return ds_2d
-
-    def _save_segmentation_netcdf(self, ds: xr.Dataset, filepath: str):
-            """Save analysis results to NetCDF for visualization.
-
-            Parameters
-            ----------
-            ds : xr.Dataset
-                Dataset with cell_labels and reflectivity (already at z-level)
-            filepath : str
-                Original radar file path (used to derive output name)
-            """
-            try:
-                output_dirs = self.config.get("output_dirs")
-                if not output_dirs:
-                    return
-
-                from adapt.setup_directories import get_analysis_path
-                radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-
-                # Create output path
-                filename_stem = Path(filepath).stem
-                seg_nc_path = get_analysis_path(
-                    output_dirs,
-                    radar_id=radar_id,
-                    analysis_type="netcdf",
-                    timestamp=pd.Timestamp.now().to_pydatetime(),
-                )
-                seg_nc_path = seg_nc_path.with_name(f"{filename_stem}_analysis.nc")
-                seg_nc_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Add metadata
-                ds.attrs.update({
-                    "source": str(filepath),
-                    "radar_id": radar_id,
-                })
-
-                # Save dataset as-is (projector already added cell_projections if available)
-                ds.to_netcdf(seg_nc_path, engine='netcdf4', unlimited_dims=['time'])
-
-                logger.info(f"✓ Analysis saved: {seg_nc_path} [{list(ds.data_vars.keys())}]")
-
-                return str(seg_nc_path)
-
-            except Exception as e:
-                logger.warning(f"Could not save segmentation NetCDF: {e}")
-                return None
-
-    def _generate_plot(self, seg_nc_path: str, filepath: str):
-        """Generate plot from segmentation NetCDF.
-
-        Parameters
-        ----------
-        seg_nc_path : str
-            Path to segmentation NetCDF file
-        filepath : str
-            Original radar file path (for metadata)
-        """
-        try:
-            from adapt.visualization.plotter import RadarPlotter
-
-            plotter = RadarPlotter(config=self.config)
-            plot_path = plotter.plot_from_netcdf(seg_nc_path)
-
-            if plot_path:
-                logger.info(f"📊 Plot saved: {plot_path}")
-
-        except Exception as e:
-            logger.warning(f"Could not generate plot: {e}")
 
 
 if __name__ == "__main__":
