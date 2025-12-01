@@ -28,7 +28,7 @@ from adapt.radar.loader import RadarDataLoader
 from adapt.radar.cell_segmenter import RadarCellSegmenter
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 from adapt.radar.cell_projector import RadarCellProjector
-from adapt.radar.radar_utils import compute_all_cell_centroids, compute_time_interval, get_grid_spacing
+from adapt.radar.radar_utils import compute_all_cell_centroids
 
 logger = logging.getLogger(__name__)
 
