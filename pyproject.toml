@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adapt"
+version = "0.1.0"
+description = "ADAPT: A real-time weather radar data processing platform designed to guide adaptive scan strategy."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "xarray",
+    "scipy",
+    "scikit-image",
+    "matplotlib",
+    "h5py",
+    "netCDF4",
+    "sqlite3",
+    "tqdm"
+]
+
+[project.scripts]
+adapt-nexrad-pipeline = "scripts.run_nexrad_pipeline:main"
