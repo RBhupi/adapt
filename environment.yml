@@ -1,0 +1,20 @@
+name: adapt
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - numpy
+  - xarray
+  - pandas
+  - arm_pyart
+  - opencv
+  - scikit-image
+  - matplotlib
+  - cartopy
+  - netCDF4
+  - nexradaws
+  - tqdm
+  - h5py
+  - pip
+  - pip:
+      - opencv-python
