@@ -185,7 +185,7 @@ class AwsNexradDownloader(threading.Thread):
             return []
 
     def _process_scans(self, scans: list) -> list:
-        """Process list of scans: download if needed, queue all."""
+        """Process list of scans: download if needed, queue only if file exists."""
         new_downloads = []
         queued = 0
 
@@ -202,14 +202,18 @@ class AwsNexradDownloader(threading.Thread):
                     is_new = True
                     new_downloads.append(local_path)
                 else:
-                    continue  # Skip failed downloads
+                    logger.warning("Failed to download: %s", scan.key)
+                    continue  # Skip queueing if download failed
 
-            # Queue the file
-            with self._known_files_lock:
-                if local_path not in self._known_files:
-                    self._notify_queue(local_path, scan.scan_time, is_new)
-                    self._known_files.add(local_path)
-                    queued += 1
+            # Queue the file ONLY if it now exists on disk
+            if self._file_exists(local_path):
+                with self._known_files_lock:
+                    if local_path not in self._known_files:
+                        self._notify_queue(local_path, scan.scan_time, is_new)
+                        self._known_files.add(local_path)
+                        queued += 1
+            else:
+                logger.error("File missing after download attempt: %s", local_path)
 
         logger.info("Processed: %d queued, %d new downloads", queued, len(new_downloads))
 

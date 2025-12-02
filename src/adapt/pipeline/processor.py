@@ -178,6 +178,13 @@ class RadarProcessor(threading.Thread):
             # Step 0: Handle dict input and check tracker for completed/plotting
             if isinstance(filepath, dict):
                 filepath = filepath["path"]
+            
+            # Validate file exists before attempting to process
+            file_path = Path(filepath)
+            if not file_path.exists():
+                logger.error("File not found: %s", filepath)
+                return False
+            
             file_id = Path(filepath).stem
             tracker = self.config.get("file_tracker")
             if tracker and tracker.should_process(file_id, "analyzed") is False:
@@ -426,11 +433,14 @@ class RadarProcessor(threading.Thread):
                 except queue.Empty:
                     continue
 
-                # Process file
-                success = self.process_file(filepath)
-
-                # Mark task as done
-                self.input_queue.task_done()
+                # Process file (always mark as done even if it fails)
+                try:
+                    success = self.process_file(filepath)
+                except Exception as e:
+                    logger.exception("Failed to process file: %s", filepath)
+                finally:
+                    # Always mark task as done to prevent queue from blocking
+                    self.input_queue.task_done()
 
             except Exception as e:
                 logger.exception("Processor error")
