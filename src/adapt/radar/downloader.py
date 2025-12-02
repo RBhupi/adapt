@@ -188,11 +188,13 @@ class AwsNexradDownloader(threading.Thread):
         """Process list of scans: download if needed, queue only if file exists."""
         new_downloads = []
         queued = 0
+        processed = 0
 
         for scan in scans:
             if self.stopped():
                 break
 
+            processed += 1
             local_path = self._get_local_path(scan)
             is_new = False
 
@@ -215,13 +217,15 @@ class AwsNexradDownloader(threading.Thread):
             else:
                 logger.error("File missing after download attempt: %s", local_path)
 
-        logger.info("Processed: %d queued, %d new downloads", queued, len(new_downloads))
+        logger.info("Processed: %d queued, %d new downloads (attempted %d/%d scans)", 
+                   queued, len(new_downloads), processed, len(scans))
 
-        # Mark historical complete if all processed
+        # Mark historical complete when all scans have been attempted
         if self.is_historical_mode():
             self._processed_scans = queued
-            if queued >= len(scans):
+            if processed >= len(scans):
                 self._historical_complete.set()
+                logger.info("Historical mode complete after processing %d scans", processed)
 
         return new_downloads
 

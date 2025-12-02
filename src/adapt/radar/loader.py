@@ -45,11 +45,19 @@ class RadarDataLoader:
         return ensure_keys(ensure_present(cfg))
 
     def read(self, filepath: Path | str) -> Optional[object]:
-        """ Read a radar file to Py-ART.
+        """Read a radar file to Py-ART.
+        
+        Validates file exists before attempting to read.
         """
-
         try:
             filepath = str(filepath)
+            
+            # Validate file exists
+            from pathlib import Path as PathlibPath
+            if not PathlibPath(filepath).exists():
+                logger.error("Radar file not found: %s", filepath)
+                return None
+            
             file_format = self.reader_config.get("file_format", "nexrad_archive")
 
             if file_format == "nexrad_archive":
