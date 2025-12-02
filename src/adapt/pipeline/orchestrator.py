@@ -213,20 +213,44 @@ class PipelineOrchestrator:
         self._drain_queue(self.downloader_queue, "processor")
         self._drain_queue(self.plotter_queue, "plotter")
 
-        logger.info("⏳ Grace period (10s)...")
-        time.sleep(10)
+        # Now stop processor and plotter threads
+        logger.info("Stopping processor and plotter threads...")
+        if self.processor and self.processor.is_alive():
+            self.processor.stop()
+            self.processor.join(timeout=10)
+            if self.processor.is_alive():
+                logger.warning("Processor thread did not stop cleanly")
+        
+        if self.plotter and self.plotter.is_alive():
+            self.plotter.stop()
+            self.plotter.join(timeout=10)
+            if self.plotter.is_alive():
+                logger.warning("Plotter thread did not stop cleanly")
+
         logger.info("✅ Historical mode complete")
         return True
 
     def _drain_queue(self, q: queue.Queue, name: str, timeout: int = 300):
         """Wait for queue to drain with timeout."""
         wait_count = 0
+        start_time = time.time()
+        last_size = q.qsize()
+        
         while q.qsize() > 0:
-            logger.info("⏳ Waiting for %s queue: %d remaining", name, q.qsize())
+            current_size = q.qsize()
+            if current_size == last_size:
+                wait_count += 1
+            else:
+                wait_count = 0  # Reset if progress is being made
+                last_size = current_size
+            
+            logger.info("⏳ Waiting for %s queue: %d remaining", name, current_size)
             time.sleep(5)
-            wait_count += 1
-            if wait_count > timeout // 5:
-                logger.warning("%s queue drain timeout", name)
+            
+            # Check timeout both by iteration count and elapsed time
+            if wait_count > timeout // 5 or (time.time() - start_time) > timeout:
+                logger.warning("%s queue drain timeout (%d/%d seconds)", 
+                              name, int(time.time() - start_time), timeout)
                 break
 
     def stop(self):
