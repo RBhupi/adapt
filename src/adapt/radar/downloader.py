@@ -185,14 +185,16 @@ class AwsNexradDownloader(threading.Thread):
             return []
 
     def _process_scans(self, scans: list) -> list:
-        """Process list of scans: download if needed, queue all."""
+        """Process list of scans: download if needed, queue only if file exists."""
         new_downloads = []
         queued = 0
+        processed = 0
 
         for scan in scans:
             if self.stopped():
                 break
 
+            processed += 1
             local_path = self._get_local_path(scan)
             is_new = False
 
@@ -202,22 +204,28 @@ class AwsNexradDownloader(threading.Thread):
                     is_new = True
                     new_downloads.append(local_path)
                 else:
-                    continue  # Skip failed downloads
+                    logger.warning("Failed to download: %s", scan.key)
+                    continue  # Skip queueing if download failed
 
-            # Queue the file
-            with self._known_files_lock:
-                if local_path not in self._known_files:
-                    self._notify_queue(local_path, scan.scan_time, is_new)
-                    self._known_files.add(local_path)
-                    queued += 1
+            # Queue the file ONLY if it now exists on disk
+            if self._file_exists(local_path):
+                with self._known_files_lock:
+                    if local_path not in self._known_files:
+                        self._notify_queue(local_path, scan.scan_time, is_new)
+                        self._known_files.add(local_path)
+                        queued += 1
+            else:
+                logger.error("File missing after download attempt: %s", local_path)
 
-        logger.info("Processed: %d queued, %d new downloads", queued, len(new_downloads))
+        logger.info("Processed: %d queued, %d new downloads (attempted %d/%d scans)", 
+                   queued, len(new_downloads), processed, len(scans))
 
-        # Mark historical complete if all processed
+        # Mark historical complete when all scans have been attempted
         if self.is_historical_mode():
             self._processed_scans = queued
-            if queued >= len(scans):
+            if processed >= len(scans):
                 self._historical_complete.set()
+                logger.info("Historical mode complete after processing %d scans", processed)
 
         return new_downloads
 

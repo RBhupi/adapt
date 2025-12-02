@@ -120,42 +120,133 @@ class RadarProcessor(threading.Thread):
         logger.info(f"Database initialized: {self.db_path}")
 
     def _create_cells_table(self, df_cells: pd.DataFrame):
-        """Create cells table with explicit schema and composite primary key."""
-        # Map column names to SQLite types
-        type_map = {
+        """Create cells table with explicit schema including all expected columns.
+        
+        Creates columns for all possible centroid types (geom, mass, maxdbz, registration, projections),
+        heading statistics, and radar variables. Missing columns are filled with NULL.
+        
+        Primary Key: (time, cell_label) where time = time_volume_start
+        Includes time_volume_start, time, and time_volume_end for temporal tracking.
+        
+        This ensures consistent schema across all files regardless of which features are available.
+        """
+        # Define all expected columns with their types
+        # First scan may not have projections (needs 2+ frames), but schema includes them for consistency
+        expected_columns = {
+            # Temporal keys - all TIMESTAMP
+            "time_volume_start": "TIMESTAMP NOT NULL",  # Start of radar volume scan
+            "time": "TIMESTAMP NOT NULL",  # Analysis time (= time_volume_start)
+            "time_volume_end": "TIMESTAMP",  # End of radar volume scan (future: when available)
+            # Cell identifier
             "cell_label": "INTEGER NOT NULL",
-            "scan_start_time": "TIMESTAMP NOT NULL",
+            # Basic properties
             "cell_area_sqkm": "REAL",
+            # Geometric centroid (center of mass)
+            "cell_centroid_geom_x": "INTEGER",
+            "cell_centroid_geom_y": "INTEGER",
+            "cell_centroid_geom_lat": "REAL",
+            "cell_centroid_geom_lon": "REAL",
+            # Mass-weighted centroid (reflectivity weighted)
+            "cell_centroid_mass_x": "INTEGER",
+            "cell_centroid_mass_y": "INTEGER",
+            "cell_centroid_mass_lat": "REAL",
+            "cell_centroid_mass_lon": "REAL",
+            # Max reflectivity centroid
+            "cell_centroid_maxdbz_x": "INTEGER",
+            "cell_centroid_maxdbz_y": "INTEGER",
+            "cell_centroid_maxdbz_lat": "REAL",
+            "cell_centroid_maxdbz_lon": "REAL",
+            # Registration centroid (projection index 0 - frame-to-frame tracking)
+            "cell_centroid_registration_x": "INTEGER",
+            "cell_centroid_registration_y": "INTEGER",
+            "cell_centroid_registration_lat": "REAL",
+            "cell_centroid_registration_lon": "REAL",
+            # Forward projection centroids (indices 1-5, configurable)
+            "cell_centroid_projection1_x": "INTEGER",
+            "cell_centroid_projection1_y": "INTEGER",
+            "cell_centroid_projection1_lat": "REAL",
+            "cell_centroid_projection1_lon": "REAL",
+            "cell_centroid_projection2_x": "INTEGER",
+            "cell_centroid_projection2_y": "INTEGER",
+            "cell_centroid_projection2_lat": "REAL",
+            "cell_centroid_projection2_lon": "REAL",
+            "cell_centroid_projection3_x": "INTEGER",
+            "cell_centroid_projection3_y": "INTEGER",
+            "cell_centroid_projection3_lat": "REAL",
+            "cell_centroid_projection3_lon": "REAL",
+            "cell_centroid_projection4_x": "INTEGER",
+            "cell_centroid_projection4_y": "INTEGER",
+            "cell_centroid_projection4_lat": "REAL",
+            "cell_centroid_projection4_lon": "REAL",
+            "cell_centroid_projection5_x": "INTEGER",
+            "cell_centroid_projection5_y": "INTEGER",
+            "cell_centroid_projection5_lat": "REAL",
+            "cell_centroid_projection5_lon": "REAL",
+            # Motion vector statistics
+            "cell_heading_x_mean": "REAL",
+            "cell_heading_y_mean": "REAL",
+            # Projection centroids as JSON (compact storage)
+            "cell_projection_centroids_json": "TEXT",
         }
         
+        # Add radar variable statistics (from config whitelist)
+        radar_vars = self.config.get("analyzer", {}).get("radar_variables", [
+            "reflectivity", "velocity", "differential_phase",
+            "differential_reflectivity", "cross_correlation_ratio", "spectrum_width"
+        ])
+        for var in radar_vars:
+            for stat in ["mean", "min", "max"]:
+                col_name = f"radar_{var}_{stat}"
+                expected_columns[col_name] = "REAL"
+        
+        # Merge with any extra columns from current DataFrame
+        # (in case analyzer adds new columns we haven't anticipated)
         col_defs = []
+        
+        # Add columns in a logical order: keys, geometry, centroids, motion, radar
+        column_order = ["time_volume_start", "time", "time_volume_end", "cell_label", "cell_area_sqkm"]
+        
+        # Add all expected columns
+        for col_name in sorted(expected_columns.keys()):
+            if col_name not in column_order:
+                column_order.append(col_name)
+        
+        # Add any extra columns from current df that we didn't anticipate
         for col in df_cells.columns:
-            if col in type_map:
-                col_defs.append(f'"{col}" {type_map[col]}')
-            elif col.endswith("_x") or col.endswith("_y"):
-                # Centroid coordinates are INTEGER
-                col_defs.append(f'"{col}" INTEGER')
-            elif col.endswith("_lat") or col.endswith("_lon"):
-                # Latitude/longitude are REAL
-                col_defs.append(f'"{col}" REAL')
-            elif col.startswith("radar_"):
-                # Radar field statistics are REAL
-                col_defs.append(f'"{col}" REAL')
+            if col not in expected_columns:
+                column_order.append(col)
+        
+        # Build column definitions
+        for col in column_order:
+            if col in expected_columns:
+                col_defs.append(f'"{col}" {expected_columns[col]}')
             else:
-                # Everything else as TEXT
-                col_defs.append(f'"{col}" TEXT')
+                # Dynamically determine type for unexpected columns
+                if col.endswith("_x") or col.endswith("_y"):
+                    col_defs.append(f'"{col}" INTEGER')
+                elif col.endswith("_lat") or col.endswith("_lon"):
+                    col_defs.append(f'"{col}" REAL')
+                elif col.startswith("radar_"):
+                    col_defs.append(f'"{col}" REAL')
+                elif "_json" in col:
+                    col_defs.append(f'"{col}" TEXT')
+                else:
+                    col_defs.append(f'"{col}" TEXT')
         
         col_defs_str = ",\n    ".join(col_defs)
         create_sql = f"""
         CREATE TABLE IF NOT EXISTS cells (
             {col_defs_str},
-            PRIMARY KEY (scan_start_time, cell_label)
+            PRIMARY KEY (time, cell_label)
         )
         """
         self.db_conn.execute(create_sql)
-        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_scan_time ON cells(scan_start_time)")
+        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time ON cells(time)")
+        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time_volume_start ON cells(time_volume_start)")
         self.db_conn.commit()
-        logger.info("📊 Database schema created with composite primary key (scan_start_time, cell_label)")
+        logger.info("📊 Database schema created with composite PK (time, cell_label)")
+        logger.info(f"   Temporal columns: time_volume_start, time, time_volume_end (TIMESTAMP)")
+        logger.info(f"   Total columns: {len(col_defs)} (includes future-proof centroid/heading/projection slots)")
 
     def stop(self):
         """Signal processor to stop gracefully."""
@@ -173,11 +264,18 @@ class RadarProcessor(threading.Thread):
 
 
     def process_file(self, filepath: str) -> bool:
-        """Process a single radar file through the full pipeline."""
+        """Process single file: load → regrid → segment → project → analyze → save."""
         try:
             # Step 0: Handle dict input and check tracker for completed/plotting
             if isinstance(filepath, dict):
                 filepath = filepath["path"]
+            
+            # Validate file exists before attempting to process
+            file_path = Path(filepath)
+            if not file_path.exists():
+                logger.error("File not found: %s", filepath)
+                return False
+            
             file_id = Path(filepath).stem
             tracker = self.config.get("file_tracker")
             if tracker and tracker.should_process(file_id, "analyzed") is False:
@@ -196,15 +294,39 @@ class RadarProcessor(threading.Thread):
                 logger.warning("Failed to load/regrid: %s", filepath)
                 return False
 
-            # Step 2: Segment and save (return updated ds_2d)
-            ds_2d, seg_nc_path, num_cells = self._segment_and_save(ds_2d, filepath, scan_time)
-            if num_cells is None:
+            # Step 2: Segment
+            ds_2d = self.segmenter.segment(ds_2d)
+            var_names = self.config.get("global", {}).get("var_names", {})
+            labels_name = var_names.get("cell_labels", "cell_labels")
+            if labels_name not in ds_2d.data_vars:
                 logger.warning("Segmentation failed for: %s", filepath)
                 return False
+            num_cells = int(ds_2d[labels_name].max().item())
+            logger.info("Segmented: %d cells", num_cells)
 
-            # Step 3: Analyze and save (use updated ds_2d)
-            result = self._analyze_and_save(ds_2d, filepath, nc_full_path, seg_nc_path, num_cells, scan_time)
+            # Step 3: PROJECT (before analyzer so it has projection info)
+            ds_2d = self._compute_projections(ds_2d, filepath)
+
+            # Step 4: Save segmentation NetCDF for visualization (no dependency on analysis)
+            seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath, scan_time)
+            if seg_nc_path and self.output_queue:
+                try:
+                    item = {
+                        'segmentation_nc': seg_nc_path,
+                        'gridnc_file': None,
+                        'radar_id': self.config.get("downloader", {}).get("radar_id", "UNKNOWN"),
+                        'timestamp': scan_time,
+                    }
+                    self.output_queue.put_nowait(item)
+                    logger.debug(f"Pushed to plotter queue: {seg_nc_path}")
+                except queue.Full:
+                    logger.debug("Plotter queue full, skipping frame")
+
+            # Step 5: Analyze (parallel with visualization - no dependency)
+            result = self._analyze_and_save(ds_2d, filepath, nc_full_path, num_cells, scan_time)
+            
             return result
+
 
         except Exception as e:
             logger.exception("Error processing %s", filepath)
@@ -288,32 +410,78 @@ class RadarProcessor(threading.Thread):
         logger.debug(f"Extracted 2D slice at z-level, shape: {ds_2d.dims}")
         return ds, ds_2d, nc_full_path, scan_time
 
-    def _segment_and_save(self, ds_2d, filepath, scan_time):
-        """Segment cells, save segmentation NetCDF, push to plotter queue. Returns updated ds_2d."""
-        ds_2d = self.segmenter.segment(ds_2d)
-        var_names = self.config.get("global", {}).get("var_names", {})
-        labels_name = var_names.get("cell_labels", "cell_labels")
-        if labels_name not in ds_2d.data_vars:
-            return ds_2d, None, None
-        num_cells = int(ds_2d[labels_name].max().item())
-        logger.info("Segmented: %d cells", num_cells)
-        seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath)
-        if seg_nc_path and self.output_queue:
-            try:
-                item = {
-                    'segmentation_nc': seg_nc_path,
-                    'gridnc_file': None,
-                    'radar_id': self.config.get("downloader", {}).get("radar_id", "UNKNOWN"),
-                    'timestamp': scan_time,
-                }
-                self.output_queue.put_nowait(item)
-                logger.debug(f"Pushed segmentation to plotter queue: {seg_nc_path}")
-            except queue.Full:
-                logger.debug("Plotter queue full, skipping frame")
-        return ds_2d, seg_nc_path, num_cells
+    def _compute_projections(self, ds_2d: xr.Dataset, filepath: str) -> xr.Dataset:
+        """Compute optical flow projections if 2+ frames available.
+        
+        Parameters
+        ----------
+        ds_2d : xr.Dataset
+            Segmented 2D dataset
+        filepath : str
+            Current file path (for history tracking)
+            
+        Returns
+        -------
+        xr.Dataset
+            Dataset with projections added (flow_u, flow_v, cell_projections),
+            or original ds_2d if insufficient frames
+        """
+        # Update history with current dataset
+        self.dataset_history.append((filepath, ds_2d))
+        if len(self.dataset_history) > self.max_history:
+            self.dataset_history.pop(0)
+        
+        # Need 2+ frames for projection
+        if len(self.dataset_history) < 2:
+            logger.debug("First frame: optical flow not available (need 2+ datasets)")
+            return ds_2d
+        
+        try:
+            ds_prev_path, ds_prev = self.dataset_history[-2]
+            ds_curr_path, ds_curr = self.dataset_history[-1]
+            
+            # Projector returns 2D ds with cell_projections, flow_u, flow_v added
+            ds_with_proj = self.projector.project([ds_prev, ds_curr])
+            if ds_with_proj is not None:
+                logger.info(f"✓ Projections computed: {list(ds_with_proj.data_vars)}")
+                return ds_with_proj
+        except Exception as e:
+            logger.error(f"Optical flow projection failed: {e}", exc_info=True)
+        
+        return ds_2d
 
-    def _analyze_and_save(self, ds_2d, filepath, nc_full_path, seg_nc_path, num_cells, scan_time):
-        """Analyze cells, update tracker, insert into SQLite DB."""
+    def _get_table_columns(self) -> list:
+        """Get list of column names from existing cells table."""
+        try:
+            cursor = self.db_conn.execute("PRAGMA table_info(cells)")
+            return [row[1] for row in cursor.fetchall()]
+        except:
+            return []
+
+    def _align_dataframe_to_schema(self, df_cells: pd.DataFrame) -> pd.DataFrame:
+        """Align DataFrame columns to existing table schema.
+        
+        Ensures all columns from the table schema are present in the DataFrame,
+        filling missing columns with NULL values. This handles cases where:
+        - First file creates schema with only available columns
+        - Subsequent files have new columns from enhanced extraction
+        - Early frames lack projection data (need 2+ frames)
+        """
+        existing_cols = self._get_table_columns()
+        if existing_cols:
+            # Add missing columns with NULL values
+            missing_cols = [c for c in existing_cols if c not in df_cells.columns]
+            if missing_cols:
+                logger.debug("DataFrame missing %d columns: %s (filling with NULL)", len(missing_cols), missing_cols[:5])
+                for col in missing_cols:
+                    df_cells[col] = None
+            
+            # Ensure column order matches table schema
+            df_cells = df_cells[existing_cols]
+        return df_cells
+
+    def _analyze_and_save(self, ds_2d, filepath, nc_full_path, num_cells, scan_time):
+        """Analyze cells (now has projection info), update tracker, insert into SQLite DB."""
         z_level = self.config.get("global", {}).get("z_level", 2000)
         df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
         tracker = self.config.get("file_tracker")
@@ -326,17 +494,22 @@ class RadarProcessor(threading.Thread):
                 tracker.mark_stage_complete(file_id, "analyzed", num_cells=0)
             return True
 
-        # Ensure scan_start_time is datetime for SQLite TIMESTAMP
-        if "scan_start_time" in df_cells.columns:
-            df_cells["scan_start_time"] = pd.to_datetime(df_cells["scan_start_time"])
+        # Ensure time columns are datetime for SQLite TIMESTAMP
+        time_cols = ["time_volume_start", "time", "time_volume_end"]
+        for col in time_cols:
+            if col in df_cells.columns:
+                df_cells[col] = pd.to_datetime(df_cells[col], errors='coerce')
 
-        logger.debug("Analyzed: %d cells with properties", len(df_cells))
+        logger.debug("Analyzed: %d cells with projection info", len(df_cells))
         self._log_cell_statistics(df_cells)
         
         with self.output_lock:
             if not self.db_initialized:
                 self._create_cells_table(df_cells)
                 self.db_initialized = True
+            else:
+                # Align DataFrame to existing table schema (handles files with different variables)
+                df_cells = self._align_dataframe_to_schema(df_cells)
             # Append data (schema already exists)
             df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
         
@@ -357,11 +530,14 @@ class RadarProcessor(threading.Thread):
                 except queue.Empty:
                     continue
 
-                # Process file
-                success = self.process_file(filepath)
-
-                # Mark task as done
-                self.input_queue.task_done()
+                # Process file (always mark as done even if it fails)
+                try:
+                    success = self.process_file(filepath)
+                except Exception as e:
+                    logger.exception("Failed to process file: %s", filepath)
+                finally:
+                    # Always mark task as done to prevent queue from blocking
+                    self.input_queue.task_done()
 
             except Exception as e:
                 logger.exception("Processor error")
@@ -531,31 +707,13 @@ class RadarProcessor(threading.Thread):
         logger.debug(f"Extracted 2D slice at z={ds[z_name].values[z_idx]:.0f}m (index {z_idx})")
         return ds_2d
 
-    def _save_segmentation_netcdf(self, ds: xr.Dataset, filepath: str):
+    def _save_segmentation_netcdf(self, ds: xr.Dataset, filepath: str, scan_time) -> Optional[str]:
         """Save analysis results to NetCDF for visualization.
-
-        Parameters
-        ----------
-        ds : xr.Dataset
-            2D dataset with cell_labels and reflectivity at z-level
-        filepath : str
-            Original radar file path (used to derive output name)
         """
         try:
             output_dirs = self.config.get("output_dirs")
             if not output_dirs:
-                return
-
-            from datetime import datetime
-
-            # Extract scan_time from filepath for YYYYMMDD directory
-            try:
-                filename = Path(filepath).stem
-                parts = filename.split('_')
-                datetime_str = parts[0][-8:] + parts[1]  # YYYYMMDD + HHMMSS
-                scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-            except:
-                scan_time = datetime.now()
+                return None
 
             from adapt.setup_directories import get_analysis_path
             radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
@@ -572,51 +730,19 @@ class RadarProcessor(threading.Thread):
             )
             seg_nc_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Update rolling history with current 2D dataset
-            self.dataset_history.append((filepath, ds))
-            if len(self.dataset_history) > self.max_history:
-                self.dataset_history.pop(0)
-
-            # Get dataset to save (with projections if available)
-            ds_to_save = ds
-            
-            # Compute optical flow projections if we have 2+ frames
-            # Projector expects 2D datasets
-            if len(self.dataset_history) >= 2:
-                try:
-                    ds_prev_path, ds_prev = self.dataset_history[-2]
-                    ds_curr_path, ds_curr = self.dataset_history[-1]
-
-                    # Projector returns 2D ds with cell_projections, flow_u, flow_v added
-                    ds_with_proj = self.projector.project([ds_prev, ds_curr])
-
-                    if ds_with_proj is not None:
-                        ds_to_save = ds_with_proj
-                        logger.info(f"✓ Projections computed: {list(ds_with_proj.data_vars)}")
-                except Exception as e:
-                    logger.error(f"Optical flow projection failed: {e}", exc_info=True)
-            else:
-                logger.debug("First frame: optical flow not available (need 2+ datasets)")
-
             # Add metadata
-            ds_to_save.attrs.update({
+            ds.attrs.update({
                 "source": str(filepath),
                 "radar_id": radar_id,
                 "description": "Radar analysis with segmentation and projections"
             })
 
             # Save to NetCDF
-            seg_nc_path.parent.mkdir(parents=True, exist_ok=True)
-            ds_to_save.to_netcdf(
-                seg_nc_path,
-                mode='w',
-                engine='netcdf4',
-                format='NETCDF4'
-            )
-            ds_to_save.close()
+            ds.to_netcdf(seg_nc_path, mode='w', engine='netcdf4', format='NETCDF4', compute=True)
+            ds.close()
 
             # Log what was saved
-            components = list(ds_to_save.data_vars.keys())
+            components = list(ds.data_vars.keys())
             logger.info(f"✓ Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
 
             return str(seg_nc_path)

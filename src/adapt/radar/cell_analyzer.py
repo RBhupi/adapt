@@ -7,6 +7,7 @@ Author: Bhupendra Raut
 """
 
 import logging
+import json
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -29,6 +30,7 @@ class RadarCellAnalyzer:
     Called after projection with ds containing:
     - cell_labels: segmentation labels (y, x)
     - heading_x, heading_y: motion vectors (y, x)
+    - cell_projections: projection centroids (offset, y, x)
     - reflectivity and other fields
     """
     
@@ -39,20 +41,40 @@ class RadarCellAnalyzer:
         ----------
         config : dict
             Configuration with 'global' section for var_names/coord_names,
-            and 'exclude_fields' list for variables to skip.
+            'radar_variables' list for variables to analyze,
+            'exclude_fields' list for variables to skip,
+            and 'projector' section with max_projection_steps.
         """
         self.config = config or {}
         self._global_config = self.config.get("global", {})
+        self._projector_config = self.config.get("projector", {})
         
         # Get variable names from config
         var_names = self._global_config.get("var_names", {})
         self.reflectivity_field = var_names.get("reflectivity", "reflectivity")
         
-        # Fields to exclude from statistics
+        # Whitelist of radar variables to analyze (only these get stats computed)
+        self.radar_variables = self.config.get(
+            "radar_variables",
+            [
+                "reflectivity", "velocity", "differential_phase",
+                "differential_reflectivity", "spectrum_width",
+                "cross_correlation_ratio",
+            ]
+        )
+        
+        # Fields to exclude from statistics (metadata, flow vectors, etc.)
         self.exclude_fields = self.config.get(
             "exclude_fields", 
-            ["ROI", "labels", "cell_labels", "heading_x", "heading_y", "clutter_filter_power_removed"]
+            [
+                "ROI", "labels", "cell_labels",  # Segmentation metadata
+                "clutter_filter_power_removed",  # Clutter filter
+                "cell_projections",  # Projection metadata
+            ]
         )
+        
+        # Get max projection steps from config
+        self.max_projection_steps = self._projector_config.get("max_projection_steps", 5)
 
     def extract(self, ds: xr.Dataset, z_level: int = None) -> pd.DataFrame:
         """Extract centroid and statistics from labeled cells.
@@ -140,13 +162,51 @@ class RadarCellAnalyzer:
             return lat_grid, lon_grid
 
     def _get_valid_data_vars(self, ds):
-        """Get list of variables suitable for statistics."""
-        return [
-            v for v in ds.data_vars
-            if v not in self.exclude_fields and (
-                ds[v].dims[-2:] == ("y", "x") or ds[v].dims[-3:] == ("z", "y", "x")
-            )
-        ]
+        """Get list of radar variables suitable for statistics analysis.
+        
+        Uses whitelist approach: only variables in radar_variables config
+        that are actually present in the dataset are analyzed.
+        """
+        available_vars = []
+        for var in self.radar_variables:
+            if var in ds.data_vars and var not in self.exclude_fields:
+                # Check if it's 2D (y, x) or 3D (z, y, x)
+                if ds[var].dims[-2:] == ("y", "x") or ds[var].dims[-3:] == ("z", "y", "x"):
+                    available_vars.append(var)
+        return available_vars
+
+    def _compute_geometric_centroid(self, mask, lat_grid=None, lon_grid=None):
+        """Compute geometric centroid (center of mass) of cell region.
+        
+        Parameters
+        ----------
+        mask : np.ndarray
+            Boolean mask of cell region
+        lat_grid : np.ndarray, optional
+            Latitude grid for geographic coordinates
+        lon_grid : np.ndarray, optional
+            Longitude grid for geographic coordinates
+            
+        Returns
+        -------
+        dict
+            Centroid coordinates: centroid_x, centroid_y, centroid_lat, centroid_lon
+        """
+        centroid_y, centroid_x = center_of_mass(mask.astype(float))
+        centroid_x = int(np.round(centroid_x))
+        centroid_y = int(np.round(centroid_y))
+        
+        result = {
+            "centroid_x": centroid_x,
+            "centroid_y": centroid_y,
+        }
+        
+        if lat_grid is not None and lon_grid is not None:
+            lat, lon = self.get_lat_lon(centroid_x, centroid_y, lat_grid, lon_grid)
+            result["centroid_lat"] = float(lat)
+            result["centroid_lon"] = float(lon)
+        
+        return result
 
     def _extract_field_values(self, ds, var, mask):
         """Extract field values at mask locations for 2D data."""
@@ -155,11 +215,22 @@ class RadarCellAnalyzer:
 
     def _extract_region_props(self, region, label_array, refl, lat_grid, lon_grid,
                               ds, data_vars, pixel_area_km2):
-        """Extract properties for a single cell region (2D data).
+        """Extract properties for a single cell region.
         
-        Naming convention:
-        - cell_<property>: Cell geometric/spatial properties
-        - radar_<variable>: Radar var statistics for the cell (velocity, differential_phase, etc.)
+        Naming convention - ALL centroids stored in both XY and lat/lon:
+        - cell_centroid_<type>_x, cell_centroid_<type>_y: Pixel coordinates
+        - cell_centroid_<type>_lat, cell_centroid_<type>_lon: Geographic coordinates
+        
+        Centroid types:
+        - geom: Geometric centroid (center of mass of binary mask)
+        - mass: Mass-weighted centroid (reflectivity weighted)
+        - maxdbz: Maximum reflectivity centroid
+        - registration_<idx>: Registration/projection centroids (index 0 = registration)
+        - projection_<idx>: Forward projection centroids (indices 1+)
+        
+        Other naming:
+        - cell_heading_<stat>: Heading vector statistics within cell
+        - radar_<variable>_<stat>: Radar variable statistics
         """
         mask = label_array == region.label
         region_coords = region.coords
@@ -171,11 +242,8 @@ class RadarCellAnalyzer:
         scan_time = str(ds.time.values) if "time" in ds.coords else ""
 
         # === GEOMETRIC CENTROID (center of mass of binary mask) ===
-        centroid_geom_y, centroid_geom_x = center_of_mass(mask.astype(float))
-        lat_geom, lon_geom = self.get_lat_lon(
-            int(np.round(centroid_geom_x)), int(np.round(centroid_geom_y)), lat_grid, lon_grid
-        )
-
+        geom_props = self._compute_geometric_centroid(mask, lat_grid, lon_grid)
+        
         # === MAX REFLECTIVITY CENTROID ===
         centroid_maxdbz_y = int(np.round(max_coord[0]))
         centroid_maxdbz_x = int(np.round(max_coord[1]))
@@ -186,44 +254,103 @@ class RadarCellAnalyzer:
         refl_cell = refl[mask]
         if len(refl_cell) > 0 and np.any(np.isfinite(refl_cell)):
             y_indices, x_indices = np.where(mask)
-            # Use only finite values for weighting
             valid_mask = np.isfinite(refl_cell)
             if np.any(valid_mask):
                 centroid_mass_y = int(np.round(np.average(y_indices[valid_mask], weights=refl_cell[valid_mask])))
                 centroid_mass_x = int(np.round(np.average(x_indices[valid_mask], weights=refl_cell[valid_mask])))
             else:
-                centroid_mass_y, centroid_mass_x = int(np.round(centroid_geom_y)), int(np.round(centroid_geom_x))
+                centroid_mass_y, centroid_mass_x = int(np.round(geom_props["centroid_y"])), int(np.round(geom_props["centroid_x"]))
         else:
-            centroid_mass_y, centroid_mass_x = int(np.round(centroid_geom_y)), int(np.round(centroid_geom_x))
+            centroid_mass_y, centroid_mass_x = int(np.round(geom_props["centroid_y"])), int(np.round(geom_props["centroid_x"]))
 
-        lat_mass, lon_mass = self.get_lat_lon(
-            centroid_mass_x, centroid_mass_y, lat_grid, lon_grid
-        )
+        lat_mass, lon_mass = self.get_lat_lon(centroid_mass_x, centroid_mass_y, lat_grid, lon_grid)
 
+        # Build properties dict with ALL centroids in both XY and lat/lon
         props = {
+            "time_volume_start": scan_time,  # Start of radar volume scan
+            "time": scan_time,  # Analysis time (same as time_volume_start)
+            "time_volume_end": None,  # Will be populated when available
             "cell_label": int(region.label),
             "cell_area_sqkm": float(region.area * pixel_area_km2),
-            "cell_centroid_geom_x": int(np.round(centroid_geom_x)),
-            "cell_centroid_geom_y": int(np.round(centroid_geom_y)),
-            "cell_centroid_geom_lat": float(lat_geom),
-            "cell_centroid_geom_lon": float(lon_geom),
+            # Geometric centroid - both XY and lat/lon
+            "cell_centroid_geom_x": geom_props["centroid_x"],
+            "cell_centroid_geom_y": geom_props["centroid_y"],
+            "cell_centroid_geom_lat": geom_props.get("centroid_lat", np.nan),
+            "cell_centroid_geom_lon": geom_props.get("centroid_lon", np.nan),
+            # Max reflectivity centroid - both XY and lat/lon
             "cell_centroid_maxdbz_x": centroid_maxdbz_x,
             "cell_centroid_maxdbz_y": centroid_maxdbz_y,
             "cell_centroid_maxdbz_lat": lat_maxdbz,
             "cell_centroid_maxdbz_lon": lon_maxdbz,
+            # Mass-weighted centroid - both XY and lat/lon
             "cell_centroid_mass_x": centroid_mass_x,
             "cell_centroid_mass_y": centroid_mass_y,
             "cell_centroid_mass_lat": float(lat_mass),
             "cell_centroid_mass_lon": float(lon_mass),
-            "scan_start_time": scan_time,
         }
+
+        # === HEADING VECTOR STATISTICS ===
+        if "heading_x" in ds.data_vars and "heading_y" in ds.data_vars:
+            try:
+                heading_x_vals = self._extract_field_values(ds, "heading_x", mask)
+                heading_y_vals = self._extract_field_values(ds, "heading_y", mask)
+                if heading_x_vals.size > 0 and heading_y_vals.size > 0:
+                    props["cell_heading_x_mean"] = float(np.nanmean(heading_x_vals))
+                    props["cell_heading_y_mean"] = float(np.nanmean(heading_y_vals))
+            except Exception as e:
+                logger.debug("Could not extract heading vectors: %s", e)
+
+        # === PROJECTION CENTROIDS (registration + forward projections) ===
+        # Store ALL in both XY and lat/lon coordinates
+        if "cell_projections" in ds.data_vars:
+            try:
+                projections = ds["cell_projections"].values
+                if projections.ndim == 3:  # (offset, y, x)
+                    projection_centroids = []
+                    
+                    # Extract centroids for each projection step
+                    for step_idx in range(min(projections.shape[0], self.max_projection_steps + 1)):
+                        proj_mask = projections[step_idx] == region.label
+                        if np.any(proj_mask):
+                            # Use reusable centroid function (already has lat/lon)
+                            proj_centroid = self._compute_geometric_centroid(proj_mask, lat_grid, lon_grid)
+                            projection_centroids.append(proj_centroid)
+                        else:
+                            projection_centroids.append(None)
+                    
+                    # Store each centroid in both XY and lat/lon
+                    if projection_centroids:
+                        # Index 0 = Registration centroid (projection from previous to current frame)
+                        if projection_centroids[0] is not None:
+                            reg_cent = projection_centroids[0]
+                            props["cell_centroid_registration_x"] = reg_cent["centroid_x"]
+                            props["cell_centroid_registration_y"] = reg_cent["centroid_y"]
+                            if "centroid_lat" in reg_cent:
+                                props["cell_centroid_registration_lat"] = reg_cent["centroid_lat"]
+                                props["cell_centroid_registration_lon"] = reg_cent["centroid_lon"]
+                        
+                        # Indices 1+ = Forward projection centroids
+                        for proj_idx, proj_cent in enumerate(projection_centroids[1:], start=1):
+                            if proj_cent is not None:
+                                props[f"cell_centroid_projection{proj_idx}_x"] = proj_cent["centroid_x"]
+                                props[f"cell_centroid_projection{proj_idx}_y"] = proj_cent["centroid_y"]
+                                if "centroid_lat" in proj_cent:
+                                    props[f"cell_centroid_projection{proj_idx}_lat"] = proj_cent["centroid_lat"]
+                                    props[f"cell_centroid_projection{proj_idx}_lon"] = proj_cent["centroid_lon"]
+                        
+                        # Also store full projection centroids as JSON for compact storage
+                        props["cell_projection_centroids_json"] = json.dumps([
+                            {k: v for k, v in c.items() if c and not (isinstance(v, float) and np.isnan(v))} if c else None
+                            for c in projection_centroids
+                        ])
+            except Exception as e:
+                logger.debug("Could not extract projection centroids: %s", e)
 
         # Add statistics for each valid data variable (2D) with radar_ prefix
         for var in data_vars:
             try:
                 vals = self._extract_field_values(ds, var, mask)
                 if vals.size > 0:
-                    # Use radar_ prefix for all radar field variables
                     props[f"radar_{var}_mean"] = float(np.nanmean(vals))
                     props[f"radar_{var}_min"] = float(np.nanmin(vals))
                     props[f"radar_{var}_max"] = float(np.nanmax(vals))

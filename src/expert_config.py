@@ -80,7 +80,22 @@ PIPELINE_CONFIG: Dict = {
     },
     
     "analyzer": {
-        "exclude_fields": ["ROI", "labels", "cell_labels"],
+        # Whitelist of radar measurement variables to analyze
+        # Only these variables will have statistics extracted and saved to database
+        "radar_variables": [
+            "reflectivity",
+            "velocity",
+            "differential_phase",
+            "differential_reflectivity",
+            "spectrum_width",
+            "cross_correlation_ratio",
+        ],
+        # Fields to always exclude (metadata, segmentation, flow vectors)
+        "exclude_fields": [
+            "ROI", "labels", "cell_labels",  # Segmentation metadata
+            "cell_projections",  # Projection metadata
+            "clutter_filter_power_removed"  # Clutter filter
+        ],
     },
     
     "visualization": {
