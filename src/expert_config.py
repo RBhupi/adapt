@@ -89,14 +89,12 @@ PIPELINE_CONFIG: Dict = {
             "differential_reflectivity",
             "spectrum_width",
             "cross_correlation_ratio",
-            "clutter_filter_power_removed",
         ],
         # Fields to always exclude (metadata, segmentation, flow vectors)
         "exclude_fields": [
-            "ROI", "labels", "cell_labels",
-            "heading_x", "heading_y",
-            "flow_u", "flow_v",
-            "cell_projections",
+            "ROI", "labels", "cell_labels",  # Segmentation metadata
+            "cell_projections",  # Projection metadata
+            "clutter_filter_power_removed"  # Clutter filter
         ],
     },
     
