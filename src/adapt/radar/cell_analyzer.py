@@ -39,6 +39,7 @@ class RadarCellAnalyzer:
         ----------
         config : dict
             Configuration with 'global' section for var_names/coord_names,
+            'radar_variables' list for variables to analyze,
             and 'exclude_fields' list for variables to skip.
         """
         self.config = config or {}
@@ -48,10 +49,25 @@ class RadarCellAnalyzer:
         var_names = self._global_config.get("var_names", {})
         self.reflectivity_field = var_names.get("reflectivity", "reflectivity")
         
-        # Fields to exclude from statistics
+        # Whitelist of radar variables to analyze (only these get stats computed)
+        self.radar_variables = self.config.get(
+            "radar_variables",
+            [
+                "reflectivity", "velocity", "differential_phase",
+                "differential_reflectivity", "spectrum_width",
+                "cross_correlation_ratio", "clutter_filter_power_removed",
+            ]
+        )
+        
+        # Fields to exclude from statistics (metadata, flow vectors, etc.)
         self.exclude_fields = self.config.get(
             "exclude_fields", 
-            ["ROI", "labels", "cell_labels", "heading_x", "heading_y", "clutter_filter_power_removed"]
+            [
+                "ROI", "labels", "cell_labels",  # Segmentation metadata
+                "heading_x", "heading_y",  # Motion vectors
+                "flow_u", "flow_v",  # Optical flow
+                "cell_projections",  # Projection metadata
+            ]
         )
 
     def extract(self, ds: xr.Dataset, z_level: int = None) -> pd.DataFrame:
@@ -140,13 +156,18 @@ class RadarCellAnalyzer:
             return lat_grid, lon_grid
 
     def _get_valid_data_vars(self, ds):
-        """Get list of variables suitable for statistics."""
-        return [
-            v for v in ds.data_vars
-            if v not in self.exclude_fields and (
-                ds[v].dims[-2:] == ("y", "x") or ds[v].dims[-3:] == ("z", "y", "x")
-            )
-        ]
+        """Get list of radar variables suitable for statistics analysis.
+        
+        Uses whitelist approach: only variables in radar_variables config
+        that are actually present in the dataset are analyzed.
+        """
+        available_vars = []
+        for var in self.radar_variables:
+            if var in ds.data_vars and var not in self.exclude_fields:
+                # Check if it's 2D (y, x) or 3D (z, y, x)
+                if ds[var].dims[-2:] == ("y", "x") or ds[var].dims[-3:] == ("z", "y", "x"):
+                    available_vars.append(var)
+        return available_vars
 
     def _extract_field_values(self, ds, var, mask):
         """Extract field values at mask locations for 2D data."""
