@@ -23,7 +23,7 @@ import xarray as xr
 import sqlite3
 
 
-from adapt.config import PIPELINE_CONFIG, get_grid_kwargs, get_output_path
+from adapt.config import PARAM_CONFIG, get_grid_kwargs, get_output_path
 from adapt.radar.loader import RadarDataLoader
 from adapt.radar.cell_segmenter import RadarCellSegmenter
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
@@ -62,7 +62,7 @@ class RadarProcessor(threading.Thread):
         input_queue : queue.Queue
             Queue of filepaths from downloader.
         config : dict, optional
-            Pipeline configuration. If None, uses PIPELINE_CONFIG.
+            Pipeline configuration. If None, uses PARAM_CONFIG.
         output_queue : queue.Queue, optional
             Queue to push segmentation results for visualization.
         name : str
@@ -71,7 +71,7 @@ class RadarProcessor(threading.Thread):
         super().__init__(daemon=True, name=name)
 
         self.input_queue = input_queue
-        self.config = config or PIPELINE_CONFIG
+        self.config = config or PARAM_CONFIG
         self.output_queue = output_queue  # For plotter thread
         self._stop_event = threading.Event()
 

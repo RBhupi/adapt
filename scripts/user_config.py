@@ -16,7 +16,7 @@ CONFIG = {
     # PIPELINE MODE & TARGET
     # ========================================================================
     "MODE": "realtime",       # "realtime" or "historical"
-    "RADAR_ID": "KHTX",       # NWS NEXRAD radar ID (e.g., KDIX, KHTX, KLOT)
+    "RADAR_ID": "KJGX",       # NWS NEXRAD radar ID (e.g., KDIX, KHTX, KLOT)
     "BASE_DIR": "/Users/bhupendra/projects/arm_radar_scaning/tmp",  # All outputs go here
 
     # ========================================================================

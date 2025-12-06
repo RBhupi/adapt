@@ -79,6 +79,10 @@ results/
 # Ignore user config overrides
 scripts/user_config.py
 
+# ignore md, txt
+*.md
+*.txt
+
 # Ignore large data
 data/
 *.tar.gz
