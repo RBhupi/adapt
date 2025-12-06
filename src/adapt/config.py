@@ -1,7 +1,7 @@
 """Internal configuration defaults for ADAPT pipeline.
 
 This is a bridge file that imports from src/expert_config.py
-DO NOT EDIT - this file just enables: from adapt.config import PIPELINE_CONFIG
+DO NOT EDIT - this file just enables: from adapt.config import PARAM_CONFIG
 
 Author: Bhupendra Raut
 """
@@ -13,6 +13,6 @@ from pathlib import Path
 src_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(src_dir))
 
-from expert_config import PIPELINE_CONFIG, get_grid_kwargs, get_output_path
+from src.param_config import PARAM_CONFIG, get_grid_kwargs, get_output_path
 
-__all__ = ['PIPELINE_CONFIG', 'get_grid_kwargs', 'get_output_path']
+__all__ = ['PARAM_CONFIG', 'get_grid_kwargs', 'get_output_path']

@@ -22,7 +22,7 @@ sys.path.insert(0, str(project_root / "src"))
 
 from adapt.setup_directories import setup_output_directories
 from adapt.pipeline.orchestrator import PipelineOrchestrator
-from expert_config import PIPELINE_CONFIG
+from param_config import PIPELINE_CONFIG
 
 
 def load_config(config_path: str) -> dict:
