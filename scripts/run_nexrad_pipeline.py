@@ -22,7 +22,7 @@ sys.path.insert(0, str(project_root / "src"))
 
 from adapt.setup_directories import setup_output_directories
 from adapt.pipeline.orchestrator import PipelineOrchestrator
-from param_config import PIPELINE_CONFIG
+from param_config import PARAM_CONFIG
 
 
 def load_config(config_path: str) -> dict:
@@ -51,7 +51,7 @@ def user_to_internal_config(user: dict) -> dict:
     Merges user settings with expert_config defaults.
     """
     # Start with expert config as base
-    config = PIPELINE_CONFIG.copy()
+    config = PARAM_CONFIG.copy()
     
     # Override with user settings
     config.update({

@@ -13,6 +13,6 @@ from pathlib import Path
 src_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(src_dir))
 
-from src.param_config import PARAM_CONFIG, get_grid_kwargs, get_output_path
+from param_config import PARAM_CONFIG, get_grid_kwargs, get_output_path
 
 __all__ = ['PARAM_CONFIG', 'get_grid_kwargs', 'get_output_path']
