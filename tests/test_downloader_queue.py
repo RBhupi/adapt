@@ -38,16 +38,12 @@ def test_notify_queue_calls_tracker(tmp_path, fake_scan):
 
     tracker = FakeTracker()
     from queue import Queue
+
     q = Queue()
-    d = AwsNexradDownloader(
-        {"file_tracker": tracker},
-        result_queue=q
-    )
+    d = AwsNexradDownloader({"file_tracker": tracker}, result_queue=q)
 
     d._notify_queue(
-        path=tmp_path / "f",
-        scan_time=fake_scan("x").scan_time,
-        is_new=True
+        path=tmp_path / "f", scan_time=fake_scan("x").scan_time, is_new=True
     )
 
     assert tracker.registered
