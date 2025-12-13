@@ -23,7 +23,9 @@ class AwsNexradDownloader(threading.Thread):
     Historical mode: All files in time range.
     """
 
-    def __init__(self, config: dict, result_queue=None):
+    def __init__(
+        self, config: dict, result_queue=None, conn=None, clock=None, sleeper=None
+    ):
         """Initialize downloader.
 
         Parameters
@@ -39,6 +41,7 @@ class AwsNexradDownloader(threading.Thread):
         result_queue : Queue, optional
             Queue to notify downstream of new files.
         """
+
         super().__init__(daemon=True)
 
         self.config = config
@@ -51,7 +54,10 @@ class AwsNexradDownloader(threading.Thread):
         self.end_time = config.get("end_time", None)
 
         self.result_queue = result_queue
-        self.conn = NexradAwsInterface()
+        self.conn = conn or NexradAwsInterface()
+        # injectable time helpers for testing
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._sleep = sleeper or time.sleep
 
         self._stop_event = threading.Event()
         self._known_files = set()
@@ -117,7 +123,8 @@ class AwsNexradDownloader(threading.Thread):
                 break
             if self.is_historical_mode() and self.is_historical_complete():
                 break
-            time.sleep(2)
+            self._sleep(2)
+
 
     # ========================================================================
     # Download task - dispatches to realtime or historical
@@ -145,8 +152,11 @@ class AwsNexradDownloader(threading.Thread):
 
     def _download_realtime(self) -> list:
         """Download latest files for realtime mode."""
-        end = datetime.now(timezone.utc)
+
+        # in _download_realtime
+        end = self._clock()
         start = end - timedelta(minutes=self.minutes)
+
         logger.info("Realtime: last %d min (%s to %s)", self.minutes, start, end)
 
         scans = self._fetch_scans(start, end)
@@ -154,7 +164,7 @@ class AwsNexradDownloader(threading.Thread):
             return []
 
         # Keep only latest N
-        scans = scans[-self.latest_n:]
+        scans = scans[-self.latest_n :]
         logger.info("Keeping latest %d scans", len(scans))
 
         return self._process_scans(scans)
@@ -217,15 +227,22 @@ class AwsNexradDownloader(threading.Thread):
             else:
                 logger.error("File missing after download attempt: %s", local_path)
 
-        logger.info("Processed: %d queued, %d new downloads (attempted %d/%d scans)", 
-                   queued, len(new_downloads), processed, len(scans))
+        logger.info(
+            "Processed: %d queued, %d new downloads (attempted %d/%d scans)",
+            queued,
+            len(new_downloads),
+            processed,
+            len(scans),
+        )
 
         # Mark historical complete when all scans have been attempted
         if self.is_historical_mode():
             self._processed_scans = queued
             if processed >= len(scans):
                 self._historical_complete.set()
-                logger.info("Historical mode complete after processing %d scans", processed)
+                logger.info(
+                    "Historical mode complete after processing %d scans", processed
+                )
 
         return new_downloads
 
@@ -268,6 +285,8 @@ class AwsNexradDownloader(threading.Thread):
 
     def _notify_queue(self, path: Path, scan_time: datetime, is_new: bool):
         """Put file notification in result queue."""
+        # Keep the original behavior: if there is no result_queue, we don't
+        # queue items or attempt to register/mark the file with the tracker.
         if self.result_queue is None:
             return
 
@@ -279,11 +298,13 @@ class AwsNexradDownloader(threading.Thread):
                 tracker.register_file(file_id, self.radar_id, scan_time, path)
                 tracker.mark_stage_complete(file_id, "downloaded", path=path)
 
-            self.result_queue.put({
-                "path": path,
-                "scan_time": scan_time,
-                "radar_id": self.radar_id,
-                "file_id": file_id,
-            })
+            self.result_queue.put(
+                {
+                    "path": path,
+                    "scan_time": scan_time,
+                    "radar_id": self.radar_id,
+                    "file_id": file_id,
+                }
+            )
         except Exception as e:
             logger.error("Failed to queue notification: %s", e)

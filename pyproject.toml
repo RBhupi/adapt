@@ -15,7 +15,6 @@ dependencies = [
     "matplotlib",
     "h5py",
     "netCDF4",
-    "sqlite3",
     "tqdm"
 ]
 
