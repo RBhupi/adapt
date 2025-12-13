@@ -57,3 +57,26 @@ def test_file_exists_rejects_small_files(tmp_path):
     p.write_bytes(b"x")
 
     assert not d._file_exists(p)
+
+def test_file_exists_true(tmp_path):
+    d = AwsNexradDownloader({})
+    p = tmp_path / "f"
+    p.write_bytes(b"x" * 2048)
+    assert d._file_exists(p)
+
+
+from datetime import datetime
+def test_get_local_path(tmp_path):
+    class FakeScan:
+        key = "foo/bar/testfile"
+        scan_time = datetime(2024,1,1)
+
+    d = AwsNexradDownloader({
+        "output_dir": tmp_path,
+        "radar_id": "KDIX",
+    })
+
+    path = d._get_local_path(FakeScan())
+    assert "20240101" in str(path)
+    assert "KDIX" in str(path)
+    assert path.name == "testfile"
