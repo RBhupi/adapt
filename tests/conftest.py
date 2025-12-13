@@ -154,3 +154,52 @@ def close_cells_ds():
         {"reflectivity": (("y", "x"), data)},
         coords={"y": range(6), "x": range(6)},
     )
+
+
+# For testing motion projection
+
+@pytest.fixture
+def simple_labeled_ds_pair():
+    """
+    Two small 2D datasets with:
+    - reflectivity
+    - cell_labels
+    - valid time coordinate
+    Zero motion between frames.
+    """
+    data = np.array([
+        [0, 40, 40, 0],
+        [0, 40, 40, 0],
+        [0,  0,  0, 0],
+        [0,  0,  0, 0],
+    ], dtype=np.float32)
+
+    labels = np.array([
+        [0, 1, 1, 0],
+        [0, 1, 1, 0],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0],
+    ], dtype=np.int32)
+
+    t0 = np.datetime64("2024-01-01T00:00")
+    t1 = np.datetime64("2024-01-01T00:05")
+
+    ds1 = xr.Dataset(
+        {
+            "reflectivity": (("y", "x"), data),
+            "cell_labels": (("y", "x"), labels),
+        },
+        coords={"y": range(4), "x": range(4)},
+    )
+    ds1 = ds1.assign_coords(time=t0)
+
+    ds2 = xr.Dataset(
+        {
+            "reflectivity": (("y", "x"), data),
+            "cell_labels": (("y", "x"), labels),
+        },
+        coords={"y": range(4), "x": range(4)},
+    )
+    ds2 = ds2.assign_coords(time=t1)
+
+    return [ds1, ds2]
