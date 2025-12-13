@@ -203,3 +203,39 @@ def simple_labeled_ds_pair():
     ds2 = ds2.assign_coords(time=t1)
 
     return [ds1, ds2]
+
+
+# Analyzer fixtures
+@pytest.fixture
+def labeled_ds_with_extras(simple_2d_ds):
+    """
+    2D dataset with:
+    - cell_labels
+    - reflectivity
+    - heading vectors
+    - projections
+    """
+    ds = simple_2d_ds.copy()
+
+    labels = np.array([
+        [0, 0, 0, 0],
+        [0, 1, 1, 0],
+        [0, 1, 1, 0],
+        [0, 0, 0, 0],
+    ], dtype=np.int32)
+
+    ds["cell_labels"] = (("y", "x"), labels)
+
+    ds["heading_x"] = (("y", "x"), np.ones_like(labels, dtype=np.float32))
+    ds["heading_y"] = (("y", "x"), np.zeros_like(labels, dtype=np.float32))
+
+    projections = np.stack([labels, labels], axis=0)
+    ds["cell_projections"] = (
+        ("frame_offset", "y", "x"),
+        projections
+    )
+
+    ds = ds.assign_coords(frame_offset=[0, 1])
+    ds = ds.assign_coords(time=np.datetime64("2024-01-01T00:00"))
+
+    return ds

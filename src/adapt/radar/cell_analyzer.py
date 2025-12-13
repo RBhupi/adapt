@@ -4,6 +4,8 @@
 Extracts statistics from labeled cells for database storage.
 
 Author: Bhupendra Raut
+
+@TODO: check why we need json here for projection centroids. Remove if not needed.
 """
 
 import logging
