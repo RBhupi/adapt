@@ -5,6 +5,11 @@ from datetime import datetime
 from adapt.radar.downloader import AwsNexradDownloader
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_notify_queue_puts_item(tmp_path):
     q = Queue()
     d = AwsNexradDownloader({}, result_queue=q)

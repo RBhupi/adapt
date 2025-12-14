@@ -1,4 +1,7 @@
+import pytest
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
+
+pytestmark = pytest.mark.unit
 
 
 def test_init_with_default_config():

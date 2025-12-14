@@ -342,13 +342,13 @@ class RadarProcessor(threading.Thread):
         radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
         if output_dirs and self.output_queue:
             from adapt.setup_directories import get_analysis_path
-            from datetime import datetime
+            from datetime import datetime, timezone
             try:
                 parts = file_id.split('_')
                 datetime_str = parts[0][-8:] + parts[1]
                 scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
             except:
-                scan_time = datetime.now()
+                scan_time = datetime.now(timezone.utc)
             seg_nc_path = get_analysis_path(
                 output_dirs=output_dirs,
                 radar_id=radar_id,
@@ -378,7 +378,7 @@ class RadarProcessor(threading.Thread):
         scan_time = None
         if output_dirs:
             from adapt.setup_directories import get_netcdf_path
-            from datetime import datetime
+            from datetime import datetime, timezone
             radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
             nc_filename = Path(filepath).stem
             try:
@@ -386,7 +386,7 @@ class RadarProcessor(threading.Thread):
                 datetime_str = parts[0][-8:] + parts[1]
                 scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
             except:
-                scan_time = datetime.now()
+                scan_time = datetime.now(timezone.utc)
             nc_full_path = get_netcdf_path(output_dirs, radar_id, nc_filename, scan_time=scan_time)
             output_dir = str(nc_full_path.parent)
         else:

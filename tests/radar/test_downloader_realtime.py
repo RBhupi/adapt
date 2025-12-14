@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from adapt.radar.downloader import AwsNexradDownloader
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_realtime_download_hybrid(tmp_path, fake_scan, fake_aws_conn):
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

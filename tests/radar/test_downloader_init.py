@@ -1,5 +1,8 @@
 # tests/test_downloader_init.py
+import pytest
 from adapt.radar.downloader import AwsNexradDownloader
+
+pytestmark = pytest.mark.unit
 
 
 def test_init_custom_config(tmp_path):

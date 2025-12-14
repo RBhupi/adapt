@@ -1,5 +1,8 @@
 # tests/test_downloader_run.py
+import pytest
 from adapt.radar.downloader import AwsNexradDownloader
+
+pytestmark = pytest.mark.unit
 
 
 def test_run_exits_after_historical_complete(tmp_path, fake_scan, fake_aws_conn):

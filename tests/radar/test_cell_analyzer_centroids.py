@@ -1,5 +1,8 @@
 def test_geometric_centroid_is_inside_cell(labeled_ds_with_extras):
+    import pytest
     from adapt.radar.cell_analyzer import RadarCellAnalyzer
+
+    pytestmark = pytest.mark.unit
 
     analyzer = RadarCellAnalyzer()
     df = analyzer.extract(labeled_ds_with_extras)

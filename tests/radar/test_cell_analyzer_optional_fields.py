@@ -1,3 +1,8 @@
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_heading_statistics_optional(labeled_ds_with_extras):
     from adapt.radar.cell_analyzer import RadarCellAnalyzer
 

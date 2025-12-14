@@ -7,7 +7,7 @@ import threading
 import queue
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Tuple
 
 import numpy as np
@@ -73,7 +73,7 @@ class RadarPlotter:
     def _extract_timestamp(self, ds: xr.Dataset) -> datetime:
         """Extract timestamp from dataset."""
         if 'time' not in ds.coords:
-            return datetime.now()
+            return datetime.now(timezone.utc)
         
         try:
             time_val = ds.coords['time'].values
@@ -82,7 +82,7 @@ class RadarPlotter:
             else:
                 return pd.Timestamp(time_val[0]).to_pydatetime()
         except Exception:
-            return datetime.now()
+            return datetime.now(timezone.utc)
     
     def _get_coordinates_km(self, ds: xr.Dataset) -> Tuple[np.ndarray, np.ndarray]:
         """Get x, y coordinates in km."""
@@ -544,7 +544,7 @@ class PlotterThread(threading.Thread):
         try:
             seg_nc = item.get('segmentation_nc')
             radar_id = item.get('radar_id', 'RADAR')
-            timestamp = item.get('timestamp', datetime.now())
+            timestamp = item.get('timestamp', datetime.now(timezone.utc))
             
             if not seg_nc or not Path(seg_nc).exists():
                 logger.warning(f"Segmentation file not found: {seg_nc}")

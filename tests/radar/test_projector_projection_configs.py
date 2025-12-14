@@ -1,4 +1,7 @@
+import pytest
 from adapt.radar.cell_projector import RadarCellProjector
+
+pytestmark = pytest.mark.unit
 
 def test_max_projection_steps_is_capped(simple_labeled_ds_pair):
     proj = RadarCellProjector({

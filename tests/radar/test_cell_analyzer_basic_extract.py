@@ -1,4 +1,7 @@
+import pytest
 import pandas as pd
+
+pytestmark = pytest.mark.unit
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 
 

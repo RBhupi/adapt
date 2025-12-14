@@ -1,4 +1,6 @@
 import pytest
+
+pytestmark = pytest.mark.unit
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 
 

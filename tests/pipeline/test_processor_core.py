@@ -4,6 +4,11 @@ import xarray as xr
 from adapt.pipeline.processor import RadarProcessor
 
 
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.pipeline]
+
+
 def fake_ds():
     data = np.zeros((1, 1, 10, 10))
     return xr.Dataset(

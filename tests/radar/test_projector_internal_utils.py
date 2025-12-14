@@ -2,6 +2,11 @@ import numpy as np
 from adapt.radar.cell_projector import RadarCellProjector
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_normalize_constant_field():
     proj = RadarCellProjector({})
 

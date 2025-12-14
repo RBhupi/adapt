@@ -2,6 +2,11 @@ from adapt.radar.cell_segmenter import RadarCellSegmenter
 import numpy as np
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_min_cellsize_filter(two_cell_ds):
     seg = RadarCellSegmenter({
         "threshold": 20,

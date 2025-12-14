@@ -1,6 +1,9 @@
 # tests/test_downloader_historical.py
 from datetime import datetime, timezone
+import pytest
 from adapt.radar.downloader import AwsNexradDownloader
+
+pytestmark = pytest.mark.unit
 
 
 def test_historical_mode_completes(tmp_path, fake_scan, fake_aws_conn):

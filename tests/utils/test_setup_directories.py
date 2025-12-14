@@ -1,5 +1,8 @@
 from pathlib import Path
+import pytest
 from adapt.setup_directories import setup_output_directories
+
+pytestmark = pytest.mark.unit
 
 
 def test_setup_output_directories_creates_all(tmp_path):

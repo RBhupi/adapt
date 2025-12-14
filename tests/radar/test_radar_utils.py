@@ -1,4 +1,7 @@
+import pytest
 import numpy as np
+
+pytestmark = pytest.mark.unit
 from adapt.radar.radar_utils import compute_all_cell_centroids, compute_cell_centroid
 
 def test_compute_cell_centroid_simple():

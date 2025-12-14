@@ -1,6 +1,11 @@
 from adapt.radar.cell_segmenter import RadarCellSegmenter
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_close_cells_without_closing(close_cells_ds):
     seg = RadarCellSegmenter({
         "threshold": 30,

@@ -2,6 +2,11 @@ import numpy as np
 from adapt.radar.cell_projector import RadarCellProjector
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_projection_adds_expected_variables(simple_labeled_ds_pair):
     proj = RadarCellProjector({
         "method": "adapt_default",

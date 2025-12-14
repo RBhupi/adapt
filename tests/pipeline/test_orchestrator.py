@@ -1,4 +1,7 @@
+import pytest
 from adapt.pipeline.orchestrator import PipelineOrchestrator
+
+pytestmark = [pytest.mark.unit, pytest.mark.pipeline]
 
 
 def test_orchestrator_initialization(basic_config):

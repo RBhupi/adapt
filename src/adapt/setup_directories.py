@@ -12,7 +12,7 @@ Author: Bhupendra Raut
 
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def setup_output_directories(base_output_dir=None):
@@ -108,7 +108,7 @@ def get_nexrad_path(output_dirs, radar_id, filename, scan_time=None):
             date_str = filename.split('_')[0][-8:]  # Last 8 chars before underscore
             scan_time = datetime.strptime(date_str, '%Y%m%d')
         except:
-            scan_time = datetime.now()
+            scan_time = datetime.now(timezone.utc)
     elif isinstance(scan_time, str):
         scan_time = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
     
@@ -151,7 +151,7 @@ def get_netcdf_path(output_dirs, radar_id, filename, scan_time=None):
             date_str = filename.split('_')[0][-8:]
             scan_time = datetime.strptime(date_str, '%Y%m%d')
         except:
-            scan_time = datetime.now()
+            scan_time = datetime.now(timezone.utc)
     elif isinstance(scan_time, str):
         scan_time = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
     
@@ -199,7 +199,7 @@ def get_analysis_path(output_dirs, radar_id=None, analysis_type="parquet", times
     Path('output/analysis/20251126/KDIX/KDIX_cells_statistics.db')
     """
     if timestamp is None:
-        timestamp = datetime.now()
+        timestamp = datetime.now(timezone.utc)
     elif isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     
@@ -296,7 +296,7 @@ def get_log_path(output_dirs, radar_id=None):
     log_dir = output_dirs["logs"]
     log_dir.mkdir(parents=True, exist_ok=True)
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
     if radar_id:
         filename = f"pipeline_{radar_id}_{timestamp}.log"

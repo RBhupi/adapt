@@ -23,7 +23,7 @@ Author: Bhupendra Raut
 import sqlite3
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List
 import threading
 
@@ -177,7 +177,7 @@ class FileProcessingTracker:
                 scan_time.isoformat(),
                 str(nexrad_path) if nexrad_path else None,
                 file_size_mb,
-                datetime.now().isoformat()
+                datetime.now(timezone.utc).isoformat()
             ))
             conn.commit()
 
@@ -240,12 +240,12 @@ class FileProcessingTracker:
                         updated_at = ?
                     WHERE file_id = ?
                 """, (
-                    datetime.now().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                     str(path) if path else None,
                     num_cells,
                     new_status,
                     error,
-                    datetime.now().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                     file_id
                 ))
             else:
@@ -258,11 +258,11 @@ class FileProcessingTracker:
                         updated_at = ?
                     WHERE file_id = ?
                 """, (
-                    datetime.now().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                     str(path) if path else None,
                     new_status,
                     error,
-                    datetime.now().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                     file_id
                 ))
             conn.commit()
@@ -422,13 +422,13 @@ class FileProcessingTracker:
                     UPDATE file_processing
                     SET status = 'pending', error_message = NULL, updated_at = ?
                     WHERE status = 'failed' AND radar_id = ?
-                """, (datetime.now().isoformat(), radar_id))
+                """, (datetime.now(timezone.utc).isoformat(), radar_id))
             else:
                 conn.execute("""
                     UPDATE file_processing
                     SET status = 'pending', error_message = NULL, updated_at = ?
                     WHERE status = 'failed'
-                """, (datetime.now().isoformat(),))
+                """, (datetime.now(timezone.utc).isoformat(),))
             conn.commit()
 
             logger.info(f"Reset failed files to pending")

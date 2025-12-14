@@ -5,7 +5,7 @@ Subpackages:
 - pipeline: Orchestrator, processor, tracking
 - visualization: Plotting
 
-Author: Bhupendra Raut
+Authors: Bhupendra Raut and Sid Gupta
 """
 
 __version__ = "0.1.0"

@@ -1,4 +1,7 @@
+import pytest
 from adapt.radar.cell_segmenter import RadarCellSegmenter
+
+pytestmark = pytest.mark.unit
 import numpy as np
 
 

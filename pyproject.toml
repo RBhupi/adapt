@@ -20,3 +20,27 @@ dependencies = [
 
 [project.scripts]
 adapt-nexrad-pipeline = "scripts.run_nexrad_pipeline:main"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+
+markers = [
+    "unit: fast unit tests (no IO)",
+    "pipeline: pipeline tests with mocks",
+    "integration: tests requiring real or on-disk data",
+    "slow: long-running tests",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-cov",
+  "xarray",
+  "numpy",
+]
+
+docs = [
+  "sphinx",
+  "sphinx-rtd-theme",
+]

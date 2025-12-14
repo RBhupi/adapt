@@ -3,6 +3,11 @@ import pytest
 from adapt.radar.cell_projector import RadarCellProjector
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_validate_requires_two_datasets(simple_labeled_ds_pair):
     proj = RadarCellProjector({"method": "adapt_default"})
 

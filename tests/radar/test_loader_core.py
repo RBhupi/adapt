@@ -1,4 +1,6 @@
 import pytest
+
+pytestmark = pytest.mark.unit
 from adapt.radar.loader import RadarDataLoader
 
 def test_loader_requires_config():

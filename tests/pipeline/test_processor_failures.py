@@ -111,7 +111,10 @@ def test_processor_enqueues_when_netcdf_is_written(
     # ---- real NetCDF save ----
     seg_path = tmp_path / "seg.nc"
 
+    import pytest
     from tests.helpers.fake_netcdf import write_fake_segmentation_netcdf
+
+    pytestmark = [pytest.mark.unit, pytest.mark.pipeline]
 
     monkeypatch.setattr(
         proc,

@@ -7,6 +7,7 @@ def make_fake_grid_ds(
     z_levels=(0, 1000, 2000),
     shape=(5, 5),
     variables=("reflectivity",),
+    with_labels=True,
 ):
     """
     Create a minimal Py-ART-like grid dataset suitable
@@ -33,4 +34,26 @@ def make_fake_grid_ds(
         },
     )
 
+    return ds
+
+def make_fake_grid_ds_with_labels():
+    data = {
+        "reflectivity": (("y", "x"), np.ones((4, 4)))
+    }
+
+    data["cell_labels"] = (("y", "x"), np.array([
+        [0, 1, 1, 0],
+        [0, 1, 1, 0],
+        [0, 0, 2, 2],
+        [0, 0, 2, 2],
+    ]))
+
+    ds = xr.Dataset(
+        data,
+        coords={
+            "x": np.arange(4),
+            "y": np.arange(4),
+        },
+        attrs={"z_level_m": 2000}
+    )
     return ds

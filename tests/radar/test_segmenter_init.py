@@ -2,6 +2,11 @@ from adapt.radar.cell_segmenter import RadarCellSegmenter
 import pytest
 
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
 def test_default_config():
     seg = RadarCellSegmenter({})
     assert seg.method == "threshold"
