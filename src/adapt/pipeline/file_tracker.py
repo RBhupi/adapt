@@ -15,11 +15,60 @@ logger = logging.getLogger(__name__)
 
 
 class FileProcessingTracker:
-    """Tracks file state and lifecycle across pipeline stages.
+    """Tracks file processing state and progress through pipeline stages.
 
-    Records downloads, regridding, analysis, and visualization completion.
-    Enables resumable processing: stopped jobs can restart without reprocessing
-    completed files. Thread-safe via internal locking.
+    Records the processing lifecycle of each NEXRAD file as it moves through
+    the pipeline: download → regridding → analysis → visualization. Enables
+    resumable processing (stop and restart without reprocessing completed files).
+
+    **Pipeline Stages:**
+
+    1. **Downloaded**: Level-II file exists on disk (from AWS)
+    2. **Regridded**: NetCDF file created with Cartesian grid
+    3. **Analyzed**: Cell statistics extracted to SQLite database
+    4. **Plotted**: Visualization PNG generated
+
+    **Database Schema:**
+
+    SQLite table `file_processing`:
+
+    - file_id: Unique filename (e.g., KDIX20250305_000310_V06)
+    - radar_id: Radar identifier (e.g., KDIX)
+    - scan_time: Scan timestamp (ISO format)
+    - Status: pending, processing, completed, failed
+    - Timestamps: When each stage completed (ISO format)
+    - File paths: nexrad_path, gridnc_path, analysis_path, plot_path
+    - Metadata: file_size_mb, num_cells, error_message
+
+    **Resumability:**
+
+    If pipeline stops/crashes after marking a stage complete, that stage is
+    skipped on restart. Use `reset_failed()` to retry files marked as failed.
+    Use `cleanup_deleted_files()` to reprocess files deleted from disk.
+
+    **Thread Safety:**
+
+    All methods are thread-safe via internal locking. Multiple threads can
+    check status concurrently.
+
+    **Typical Usage:**
+
+    Called internally by orchestrator and processor. Advanced users can query
+    for progress or manually reset failed files::
+
+        tracker = FileProcessingTracker(db_path)
+        
+        # Check if file needs processing
+        if tracker.should_process(file_id, "analyzed"):
+            # Process file
+            ...
+            tracker.mark_stage_complete(file_id, "analyzed", num_cells=42)
+        
+        # Get stats
+        stats = tracker.get_statistics()
+        print(f"Processed {stats['completed']} files")
+        
+        tracker.close()
     """
 
     def __init__(self, db_path: Path | str):
@@ -88,24 +137,34 @@ class FileProcessingTracker:
 
     def register_file(self, file_id: str, radar_id: str, scan_time: datetime,
                      nexrad_path: Optional[Path] = None) -> bool:
-        """
-        Register a new file for tracking.
+        """Register a new file for tracking.
+
+        Creates an initial database record for a newly discovered NEXRAD file.
+        Called by downloader when a new file is discovered.
 
         Parameters
         ----------
         file_id : str
-            Unique file identifier (filename without extension)
+            Unique file identifier (e.g., KDIX20250305_000310_V06).
+            Typically the Level-II filename without extension.
         radar_id : str
-            Radar identifier (e.g., KHTX)
+            Radar identifier (e.g., KDIX, KHTX).
         scan_time : datetime
-            Scan timestamp
+            Scan timestamp (typically UTC). Used to filter historical ranges.
         nexrad_path : Path, optional
-            Path to original NEXRAD file
+            Path to original NEXRAD Level-II file on disk.
+            Used to compute file size for logging.
 
         Returns
         -------
         bool
-            True if newly registered, False if already exists
+            True if file newly registered, False if already in database.
+            Returning False does not indicate an error (file might be
+            mid-processing or already complete).
+
+        Notes
+        -----
+        Safe to call multiple times with same file_id (returns False on duplicates).
         """
         conn = self._get_connection()
 
@@ -141,20 +200,38 @@ class FileProcessingTracker:
                           path: Optional[Path] = None,
                           num_cells: Optional[int] = None,
                           error: Optional[str] = None):
-        """Mark a processing stage as complete.
+        """Mark a pipeline stage as complete or failed for a file.
+
+        Called by downloader, processor, and plotter threads to record progress.
+        Enables resumable processing: next run skips stages marked complete.
 
         Parameters
         ----------
         file_id : str
-            File identifier
+            File identifier (must be pre-registered via register_file).
         stage : str
-            Stage name: 'downloaded', 'regridded', 'analyzed', 'plotted'
+            Pipeline stage: 'downloaded', 'regridded', 'analyzed', 'plotted'.
         path : Path, optional
-            Path to output file for this stage
+            Path to output file created by this stage (for logging/debugging).
+            - 'downloaded': NEXRAD Level-II path
+            - 'regridded': Gridded NetCDF path
+            - 'analyzed': Analysis NetCDF path
+            - 'plotted': PNG plot path
         num_cells : int, optional
-            Number of cells (for analyzed stage)
+            Number of cells detected (for 'analyzed' stage).
         error : str, optional
-            Error message if stage failed
+            Error message if stage failed. If provided, status set to 'failed'
+            and future runs will retry this stage.
+
+        Raises
+        ------
+        ValueError
+            If stage is not one of the valid pipeline stages.
+
+        Notes
+        -----
+        Thread-safe. If called multiple times for the same stage, uses the
+        most recent timestamp. Error stages can be reset with reset_failed().
         """
         valid_stages = ['downloaded', 'regridded', 'analyzed', 'plotted']
         if stage not in valid_stages:
@@ -223,7 +300,7 @@ class FileProcessingTracker:
             logger.debug(f"Marked {stage} complete: {file_id}")
 
     def get_file_status(self, file_id: str) -> Optional[Dict]:
-        """Get processing status for a file.
+        """Get complete processing status for a file.
 
         Parameters
         ----------
@@ -233,7 +310,16 @@ class FileProcessingTracker:
         Returns
         -------
         dict or None
-            File status dict or None if not found
+            Dict with file metadata and stage completion status:
+            - `file_id`, `radar_id`, `scan_time`
+            - `status`: 'pending', 'processing', 'completed', 'failed'
+            - `error_message`: Error details if failed
+            - `file_size_mb`: Original NEXRAD file size
+            - `num_cells`: Number of cells if analyzed
+            - Timestamps: `downloaded_at`, `regridded_at`, `analyzed_at`, `plotted_at`
+            - File paths: `nexrad_path`, `gridnc_path`, `analysis_path`, `plot_path`
+
+            None if file_id not found in database.
         """
         conn = self._get_connection()
 
@@ -250,24 +336,30 @@ class FileProcessingTracker:
     def get_pending_files(self, stage: Optional[str] = None,
                          radar_id: Optional[str] = None,
                          limit: Optional[int] = None) -> List[Dict]:
-        """Get files that need processing.
+        """Get files awaiting processing at a specific stage.
+
+        Used by downloader/processor/plotter to find files needing work.
 
         Parameters
         ----------
         stage : str, optional
-            Filter by stage needing processing:
+            Filter by processing stage:
             - 'regridded': files downloaded but not regridded
             - 'analyzed': files regridded but not analyzed
             - 'plotted': files analyzed but not plotted
+            
+            If None, returns files with any pending stage.
+
         radar_id : str, optional
-            Filter by radar ID
+            Filter by radar ID (e.g., "KDIX").
+
         limit : int, optional
-            Maximum number of files to return
+            Max files to return (for batching). Default: None (all pending).
 
         Returns
         -------
         list of dict
-            List of file records
+            List of file records matching criteria, ordered by scan_time (oldest first).
         """
         conn = self._get_connection()
 
@@ -299,17 +391,27 @@ class FileProcessingTracker:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_statistics(self, radar_id: Optional[str] = None) -> Dict:
-        """Get processing statistics.
+        """Get summary statistics for processing progress.
 
         Parameters
         ----------
         radar_id : str, optional
-            Filter by radar ID
+            Filter to specific radar. If None, returns all radars.
 
         Returns
         -------
         dict
-            Statistics dictionary
+            Summary statistics:
+            - `total`: Total files registered
+            - `completed`: Files fully processed (through plotting)
+            - `pending`: Files awaiting any stage
+            - `failed`: Files with errors
+            - `total_cells`: Sum of cells across all analyzed files
+            - `radar_id`: Filtered radar (if specified)
+
+        Notes
+        -----
+        Used by orchestrator to log progress every 30 seconds.
         """
         conn = self._get_connection()
 
@@ -335,7 +437,9 @@ class FileProcessingTracker:
             return dict(row) if row else {}
 
     def should_process(self, file_id: str, stage: str) -> bool:
-        """Check if a file needs processing at given stage.
+        """Check if a file needs processing at a given stage.
+
+        Used by processor/plotter threads to determine if a stage should be skipped.
 
         Parameters
         ----------
@@ -347,7 +451,7 @@ class FileProcessingTracker:
         Returns
         -------
         bool
-            True if file should be processed, False if already done
+            True if file should be processed (stage incomplete), False if already done.
         """
         status = self.get_file_status(file_id)
 
@@ -360,12 +464,21 @@ class FileProcessingTracker:
         return status.get(timestamp_col) is None
 
     def reset_failed(self, radar_id: Optional[str] = None):
-        """Reset failed files to pending for retry.
+        """Reset all failed files to pending for retry.
+
+        Useful for recovery after fixing errors (e.g., config changes, bug fixes).
+        Clears error_message and marks status='pending' so files reprocess.
 
         Parameters
         ----------
         radar_id : str, optional
-            Filter by radar ID
+            Filter to specific radar. If None, resets all radars.
+
+        Notes
+        -----
+        Does not delete output files. On next run, stages will be skipped based
+        on existing output files, not status. Use `cleanup_deleted_files()` if
+        files were deleted and should be fully reprocessed.
         """
         conn = self._get_connection()
 
@@ -387,12 +500,20 @@ class FileProcessingTracker:
             logger.info(f"Reset failed files to pending")
 
     def cleanup_deleted_files(self, radar_id: Optional[str] = None):
-        """Remove tracking records for files that no longer exist on disk.
+        """Remove database records for files deleted from disk.
+
+        Useful after clearing output directories. On next run, these files
+        will be re-downloaded and reprocessed.
 
         Parameters
         ----------
         radar_id : str, optional
-            Filter by radar ID
+            Filter to specific radar. If None, cleans all radars.
+
+        Notes
+        -----
+        Only checks NEXRAD Level-II paths. Does not verify gridded/analysis
+        NetCDF or PNG files (those are considered intermediate).
         """
         conn = self._get_connection()
 
@@ -422,7 +543,10 @@ class FileProcessingTracker:
                 logger.info(f"Cleaned up {len(deleted)} deleted file(s)")
 
     def close(self):
-        """Close database connection."""
+        """Close database connection.
+
+        Called automatically by orchestrator.stop(). Safe to call multiple times.
+        """
         if self._conn:
             self._conn.close()
             self._conn = None

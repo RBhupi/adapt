@@ -1,11 +1,22 @@
 # src/adapt/radar/cell_analyzer.py
-"""Radar cell property analyzer.
+"""Extract statistical properties from labeled convective cells.
 
-Extracts statistics from labeled cells for database storage.
+This module computes per-cell statistics (area, intensity, motion, projection)
+from segmented radar data. Output is a Pandas DataFrame with one row per cell,
+containing geometric centroids, reflectivity/velocity statistics, and cell
+motion information.
+
+The analyzer handles:
+- Multiple centroid types: geometric (center-of-mass), mass-weighted, max reflectivity, projected
+- Multi-variable statistics: reflectivity, velocity, differential phase, spectrum width, etc.
+- Geographic coordinate conversion: pixel (x,y) to latitude/longitude
+- Cell motion: heading vectors and projection centroid evolution
+- Database-ready output: DataFrame suitable for SQL insertion
+
+All centroids are stored in both pixel coordinates (x, y) and geographic
+coordinates (latitude, longitude) for flexibility in downstream analysis.
 
 Author: Bhupendra Raut
-
-@TODO: check why we need json here for projection centroids. Remove if not needed.
 """
 
 import logging
@@ -27,25 +38,123 @@ except (ImportError, AttributeError):
 
 
 class RadarCellAnalyzer:
-    """Extract cell properties from segmented radar data.
+    """Extract geometric and statistical properties from segmented radar cells.
     
-    Called after projection with ds containing:
-    - cell_labels: segmentation labels (y, x)
-    - heading_x, heading_y: motion vectors (y, x)
-    - cell_projections: projection centroids (offset, y, x)
-    - reflectivity and other fields
+    This class computes per-cell statistics from segmented radar data to create
+    a DataFrame suitable for machine learning, statistical analysis, or database
+    storage. Input is a 2D xarray.Dataset with cell labels and radar fields;
+    output is a Pandas DataFrame with one row per cell.
+    
+    Features computed per cell:
+    
+    1. **Geometric Centroids** (in both pixel and geographic coordinates):
+       - Geometric: center-of-mass of binary cell mask
+       - Mass-weighted: reflectivity-weighted centroid
+       - Max reflectivity: location of highest reflectivity
+       - Projection: forward-projected motion centroids (0-5 steps)
+    
+    2. **Area and Size**:
+       - Cell area in km² (computed from grid spacing)
+       - Grid point count
+    
+    3. **Radar Statistics** (per variable):
+       - Mean, std, min, max, median
+       - 25th/75th percentiles
+       - Variables: reflectivity, velocity, spectrum width, differential phase, etc.
+    
+    4. **Cell Motion**:
+       - Heading vectors (from projector) within cell region
+       - Heading direction and speed statistics
+    
+    5. **Metadata**:
+       - Scan time, z-level (altitude)
+       - Dataset attributes preservation
+    
+    Configuration
+    ==============
+    Config dict structure:
+    
+    - `global` : dict, optional
+        - `var_names` : dict
+            Variable naming mapping (reflectivity, cell_labels, etc.)
+    
+    - `radar_variables` : list, optional
+        Whitelist of variables to analyze (default: common radar fields).
+        Only variables in this list AND present in dataset are included.
+    
+    - `exclude_fields` : list, optional
+        Variables to skip (metadata, projection, etc.). Takes precedence over
+        whitelist.
+    
+    - `projector` : dict, optional
+        - `max_projection_steps` : int, default 5
+            Number of forward projections to extract
+    
+    Notes
+    -----
+    - Not thread-safe; create separate instances for concurrent processing
+    - Requires pre-segmented input (cell_labels variable must exist)
+    - Processing time: 100-500 ms per frame (depends on cell count)
+    - Centroid naming is systematic: cell_centroid_<type>_{x,y,lat,lon}
+    - Returns empty DataFrame if no cells found (all labels = 0)
+    - All centroid coordinates are preserved in both coordinate systems
+    
+    Examples
+    --------
+    >>> config = {"radar_variables": ["reflectivity", "velocity"]}
+    >>> analyzer = RadarCellAnalyzer(config)
+    >>> df = analyzer.extract(ds_segmented)
+    >>> print(df.columns)  # centroid locations, area, reflectivity stats, etc.
+    >>> print(len(df))  # number of cells in this frame
     """
     
     def __init__(self, config: dict = None):
-        """Initialize analyzer with config.
+        """Initialize analyzer with configuration and variable whitelists.
+        
+        Parses configuration to determine which radar variables to analyze,
+        which fields to exclude, and where to find metadata (lat/lon grids,
+        cell labels, etc.).
         
         Parameters
         ----------
-        config : dict
-            Configuration with 'global' section for var_names/coord_names,
-            'radar_variables' list for variables to analyze,
-            'exclude_fields' list for variables to skip,
-            and 'projector' section with max_projection_steps.
+        config : dict, optional
+            Configuration dictionary with structure:
+            
+            - `global` : dict, optional
+                Global configuration with variable naming:
+                - `var_names` : dict
+                    - `reflectivity` : str, variable name for reflectivity (default: "reflectivity")
+                    - `cell_labels` : str, variable name for labels (default: "cell_labels")
+            
+            - `radar_variables` : list, optional
+                Whitelist of radar field names to analyze. Default includes:
+                ["reflectivity", "velocity", "differential_phase",
+                 "differential_reflectivity", "spectrum_width", "cross_correlation_ratio"]
+                Only variables in this list AND present in dataset are analyzed.
+            
+            - `exclude_fields` : list, optional
+                Variables to skip even if in whitelist. Default includes
+                metadata (labels, ROI), clutter fields, projection fields.
+            
+            - `projector` : dict, optional
+                Projection configuration:
+                - `max_projection_steps` : int, default 5
+                    Number of forward projection steps to extract
+        
+        Notes
+        -----
+        - All parameters use sensible defaults if missing
+        - Whitelist approach ensures only meaningful variables are analyzed
+        - Exclusion list prevents analyzing metadata/intermediate fields
+        - Initialization is fast; all computation deferred to extract()
+        
+        Examples
+        --------
+        >>> config = {
+        ...     "radar_variables": ["reflectivity", "velocity"],
+        ...     "projector": {"max_projection_steps": 5}
+        ... }
+        >>> analyzer = RadarCellAnalyzer(config)
         """
         self.config = config or {}
         self._global_config = self.config.get("global", {})
@@ -79,19 +188,77 @@ class RadarCellAnalyzer:
         self.max_projection_steps = self._projector_config.get("max_projection_steps", 5)
 
     def extract(self, ds: xr.Dataset, z_level: int = None) -> pd.DataFrame:
-        """Extract centroid and statistics from labeled cells.
-
+        """Extract geometric and statistical properties from all labeled cells.
+        
+        Computes per-cell statistics including centroids (geometric, mass-weighted,
+        max reflectivity, projected), area, and multi-variable radar statistics.
+        Output is a Pandas DataFrame suitable for machine learning, statistical
+        analysis, or database insertion (one row = one cell).
+        
         Parameters
         ----------
         ds : xr.Dataset
-            2D segmented dataset with cell_labels, reflectivity, and optional flow fields.
+            2D segmented xarray.Dataset with:
+            - Dimensions: (y, x)
+            - Data variables: cell_labels, reflectivity, velocity (optional), etc.
+            - Coordinates: x, y (pixel coordinates)
+            - Optional coordinates: lat, lon (geographic)
+            - Attributes: z_level_m (altitude), time, radar metadata
+        
         z_level : int, optional
-            Unused; kept for API compatibility.
-
+            Unused; kept for API compatibility with older versions.
+        
         Returns
         -------
         pd.DataFrame
-            Cell properties: cell_label, centroids (geom/mass/maxdbz with x/y/lat/lon), area, radar stats.
+            One row per cell (cells with label > 0). Columns include:
+            
+            - **Cell Identity**:
+              - `cell_label` : int, unique cell ID
+            
+            - **Geometric Centroids** (all in both pixel and geographic coords):
+              - `cell_centroid_geom_{x,y,lat,lon}` : Geometric centroid
+              - `cell_centroid_mass_{x,y,lat,lon}` : Reflectivity-weighted
+              - `cell_centroid_maxdbz_{x,y,lat,lon}` : Max reflectivity location
+              - `cell_centroid_projection_0_{x,y,lat,lon}` to `_4_...` : Projections
+            
+            - **Size**:
+              - `cell_area_km2` : Cell area in square kilometers
+              - `cell_area_npixels` : Number of grid points
+            
+            - **Radar Statistics** (per variable: reflectivity, velocity, etc.):
+              - `radar_<variable>_mean`, `_std`, `_min`, `_max`, `_median` : Aggregate stats
+              - `radar_<variable>_p25`, `_p75` : Percentiles
+            
+            - **Motion** (if heading vectors present):
+              - `cell_heading_<stat>` : Direction/speed statistics
+            
+            - **Metadata**:
+              - `scan_time` : Timestamp of radar scan
+              - `z_level_m` : Altitude of this slice
+            
+        Raises
+        ------
+        ValueError
+            If cell_labels variable is not present in dataset.
+        
+        Notes
+        -----
+        - Processing time: 100-500 ms per frame (depends on cell count)
+        - Returns empty DataFrame if no cells found (all labels = 0)
+        - Only variables in radar_variables config AND present in dataset
+          are analyzed (whitelist approach)
+        - All centroid coordinates are in both pixel (x, y) and geographic
+          (latitude, longitude) systems for flexibility
+        - Suitable for direct insertion into SQL database via to_sql()
+        
+        Examples
+        --------
+        >>> analyzer = RadarCellAnalyzer(config)
+        >>> df = analyzer.extract(ds_segmented)
+        >>> print(f"Found {len(df)} cells")
+        >>> print(df[['cell_label', 'cell_area_km2', 'radar_reflectivity_mean']])
+        >>> df.to_sql('cells', conn, if_exists='append')  # Database storage
         """
         # Get settings from config
         global_cfg = self._global_config

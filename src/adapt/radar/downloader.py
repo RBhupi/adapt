@@ -1,8 +1,7 @@
-"""AWS NEXRAD Level-II Downloader.
+"""AWS S3 NEXRAD Level-II file discovery and download.
 
-Downloads radar scans from AWS in realtime or historical mode.
-
-Author: Sid Gupta and Bhupendra Raut
+Monitors AWS S3 bucket for new NEXRAD radar files and downloads them locally
+in realtime or historical batches. Deduplicates files to avoid re-downloading.
 """
 
 import threading
@@ -17,10 +16,48 @@ logger = logging.getLogger(__name__)
 
 
 class AwsNexradDownloader(threading.Thread):
-    """AWS NEXRAD downloader with realtime and historical modes.
+    """Downloads NEXRAD Level-II files from AWS S3 in realtime or historical mode.
 
-    Realtime mode: Rolling window of latest files.
-    Historical mode: All files in time range.
+    **Realtime Mode:** Continuously monitors S3 for new files within a rolling
+    time window (e.g., "last 60 minutes"). Useful for operational nowcasting.
+    The latest N files are retained; older files are not re-downloaded.
+
+    **Historical Mode:** Downloads all files within a fixed time range
+    (start_time to end_time) then exits. Useful for batch reprocessing and
+    research studies.
+
+    **AWS S3 Bucket:** Files stored at
+    `s3://noaa-nexrad-level2/{YYYY}/{MM}/{DD}/{radar_id}/`
+    Example: `s3://noaa-nexrad-level2/2025/03/05/KDIX/KDIX20250305_000310_V06`
+
+    **Deduplication:** Maintains set of known files to avoid re-downloading.
+    Safe to restart mid-execution.
+
+    **Queue Communication:** Sends filepath to result_queue for each new file.
+    Downstream processor can begin work immediately (streaming architecture).
+
+    **File Size Filtering:** Ignores files < 1 KB (corrupted downloads or
+    metadata-only files).
+
+    **Thread Safety:** Safe to call status methods while run() is executing.
+    Uses locks for shared state (_known_files, historical tracking).
+
+    Example usage (typically called by orchestrator)::
+
+        downloader = AwsNexradDownloader(
+            config={
+                "radar_id": "KDIX",
+                "output_dir": "/data/nexrad",
+                "latest_n": 5,
+                "minutes": 60,
+                "sleep_interval": 30
+            },
+            result_queue=processor_queue
+        )
+        downloader.start()
+        ...
+        downloader.stop()
+        downloader.join(timeout=10)
     """
 
     def __init__(
@@ -31,15 +68,45 @@ class AwsNexradDownloader(threading.Thread):
         Parameters
         ----------
         config : dict
-            - radar_id: NEXRAD radar ID (e.g., "KDIX")
-            - output_dir: Where to save files
-            - sleep_interval: Seconds between polls (realtime)
-            - latest_n: Number of files to keep (realtime)
-            - minutes: Time window in minutes (realtime)
-            - start_time: ISO timestamp (historical)
-            - end_time: ISO timestamp (historical)
-        result_queue : Queue, optional
-            Queue to notify downstream of new files.
+            Configuration dictionary with keys:
+
+            - `radar_id` : str, e.g. "KDIX", "KHTX"
+                NEXRAD radar identifier. Must match S3 bucket directory.
+
+            - `output_dir` : str
+                Local directory where Level-II files are saved.
+                Created if doesn't exist.
+
+            - Realtime Mode:
+                - `latest_n` : int, number of latest files to keep (default: 3)
+                - `minutes` : int, rolling window in minutes (default: 60)
+                - `sleep_interval` : int, seconds between polls (default: 30)
+
+            - Historical Mode (mutually exclusive with realtime):
+                - `start_time` : str, ISO timestamp (e.g., "2025-03-05T00:00:00Z")
+                - `end_time` : str, ISO timestamp (e.g., "2025-03-05T12:00:00Z")
+
+        result_queue : queue.Queue, optional
+            Queue to push filepaths of downloaded files. Processor reads from
+            this queue. If None, no downstream notification (download-only mode).
+
+        conn : nexradaws.NexradAwsInterface, optional
+            AWS S3 connection object. If None, creates new connection.
+            Allows injection for testing.
+
+        clock : callable, optional
+            Function returning current datetime (for testing). If None, uses
+            `datetime.now(timezone.utc)`. Signature: `callable() -> datetime`.
+
+        sleeper : callable, optional
+            Function to sleep (for testing). If None, uses `time.sleep`.
+            Allows mocking time in tests.
+
+        Notes
+        -----
+        Requires AWS credentials configured via environment variables or
+        ~/.aws/credentials. The S3 bucket is public and requires no auth,
+        but credentials can speed up downloads (higher rate limits).
         """
 
         super().__init__(daemon=True)
@@ -76,27 +143,152 @@ class AwsNexradDownloader(threading.Thread):
     # ========================================================================
 
     def stop(self):
-        """Signal thread to stop."""
+        """Signal the downloader thread to stop gracefully.
+        
+        Calling this method sets the internal stop event, which causes the
+        `run()` main loop to exit. The thread will finish its current download
+        task before stopping (not immediate).
+        
+        Safe to call from any thread. Can be called multiple times.
+        
+        Examples
+        --------
+        >>> downloader = AwsNexradDownloader(config, queue)
+        >>> downloader.start()
+        >>> time.sleep(60)
+        >>> downloader.stop()  # Signal thread to exit
+        >>> downloader.join()  # Wait for thread termination
+        """
         self._stop_event.set()
 
     def stopped(self) -> bool:
-        """Check if stop was requested."""
+        """Check if a stop request has been issued.
+        
+        Returns
+        -------
+        bool
+            True if `stop()` has been called, False otherwise.
+        
+        Notes
+        -----
+        This is non-blocking and reflects whether the stop event has been set.
+        The thread may still be running even if this returns True (it finishes
+        its current task before exiting).
+        
+        Examples
+        --------
+        >>> if downloader.stopped():
+        ...     print("Stop was requested")
+        """
         return self._stop_event.is_set()
 
     def is_historical_mode(self) -> bool:
-        """Check if running in historical mode."""
+        """Check if this downloader is running in historical mode.
+        
+        Historical mode fetches a bounded time range of NEXRAD data.
+        Realtime mode continuously fetches the latest scans within a rolling window.
+        
+        Returns
+        -------
+        bool
+            True if both `start_time` and `end_time` were specified in config.
+        
+        Notes
+        -----
+        Mode is determined at initialization and does not change during
+        execution. Check this before accessing historical-specific methods
+        like `get_historical_progress()`.
+        
+        Examples
+        --------
+        >>> downloader = AwsNexradDownloader(config_realtime, queue)
+        >>> downloader.is_historical_mode()  # False
+        
+        >>> config_hist = {..., "start_time": "2025-03-05T00:00:00Z", ...}
+        >>> downloader_hist = AwsNexradDownloader(config_hist, queue)
+        >>> downloader_hist.is_historical_mode()  # True
+        """
         return bool(self.start_time and self.end_time)
 
     def is_historical_complete(self) -> bool:
-        """Check if historical download is complete."""
+        """Check if historical download has finished.
+        
+        In historical mode, this indicates whether all scans in the time range
+        have been downloaded and queued. In realtime mode, this always returns False.
+        
+        Returns
+        -------
+        bool
+            True if `is_historical_mode()` is True and all available scans
+            in the start_time to end_time range have been processed.
+        
+        Notes
+        -----
+        "Complete" means scans have been QUEUED, not necessarily processed
+        by the pipeline. The main loop will exit automatically when this is True.
+        
+        Examples
+        --------
+        >>> while not downloader.is_historical_complete():
+        ...     downloader.run()  # Wait for completion
+        """
         return self._historical_complete.is_set()
 
     def get_historical_progress(self) -> tuple:
-        """Get (processed, expected) scan counts."""
+        """Get progress of historical download as (processed, expected) counts.
+        
+        Returns
+        -------
+        tuple of (int, int)
+            First element: number of scans successfully processed/queued.
+            Second element: total number of scans expected in time range.
+        
+        Notes
+        -----
+        Only meaningful in historical mode. In realtime mode, expected is always 0.
+        Progress is (processed, expected) where processed <= expected.
+        This can be used to display download progress to the user.
+        
+        Examples
+        --------
+        >>> processed, expected = downloader.get_historical_progress()
+        >>> print(f"Downloaded {processed}/{expected} scans")
+        
+        >>> while not downloader.is_historical_complete():
+        ...     processed, expected = downloader.get_historical_progress()
+        ...     print(f"Progress: {processed}/{expected}")
+        ...     time.sleep(10)
+        """
         return self._processed_scans, self._expected_scans
 
     def run(self):
-        """Main thread loop."""
+        """Main thread loop - automatically invoked when thread starts.
+        
+        This is the primary execution method called by threading.Thread.start().
+        Do NOT call directly; use thread.start() instead.
+        
+        Behavior:
+            1. Logs startup with mode (realtime or historical)
+            2. Repeatedly calls download_task() at intervals
+            3. Handles exceptions in download task (logs and continues)
+            4. In historical mode: exits automatically when complete
+            5. In realtime mode: runs until stop() is called
+            6. Performs interruptible sleep between iterations (can exit quickly)
+        
+        Notes
+        -----
+        - Running in a background daemon thread (set at __init__)
+        - All exceptions are logged; failures don't crash the thread
+        - Sleep is interruptible: responds to stop() and historical completion
+          within 2 seconds (default is 2-second sleep chunks)
+        - Thread-safe: can call stop() from another thread
+        
+        Examples
+        --------
+        >>> downloader = AwsNexradDownloader(config, queue)
+        >>> downloader.start()  # Calls run() in background thread
+        >>> downloader.join()   # Wait for thread to finish
+        """
         mode = "historical" if self.is_historical_mode() else "realtime"
         logger.info("Starting %s in %s mode", self.name, mode)
 
@@ -131,7 +323,36 @@ class AwsNexradDownloader(threading.Thread):
     # ========================================================================
 
     def download_task(self) -> list:
-        """Main download task. Returns list of new downloads."""
+        """Execute a single download iteration (realtime or historical).
+        
+        Dispatches to appropriate download strategy based on mode:
+        - Historical: downloads scans in specified date range (one batch)
+        - Realtime: downloads latest scans within rolling time window
+        
+        Returns
+        -------
+        list of Path
+            Paths to newly downloaded files (files that didn't exist before
+            this call). Existing files already in the output directory are
+            queued but not included in return list.
+        
+        Notes
+        -----
+        - Typically called repeatedly in the run() loop
+        - Can raise exceptions; the run() loop catches and logs them
+        - Files are downloaded to a temporary directory, then moved to
+          the final location to ensure atomic writes
+        - Only files >= 1 KB are considered valid
+        - All queued files (new or existing) are put in result_queue
+        - In historical mode: after one complete iteration, completion
+          is marked (but loop continues to allow processing time)
+        
+        Examples
+        --------
+        >>> downloader = AwsNexradDownloader(config, queue)
+        >>> new_files = downloader.download_task()
+        >>> print(f"Downloaded {len(new_files)} new files")
+        """
         if self.is_historical_mode():
             return self._download_historical()
         else:

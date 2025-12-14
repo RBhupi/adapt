@@ -30,14 +30,76 @@ logger = logging.getLogger(__name__)
 
 
 class RadarProcessor(threading.Thread):
-    """Processes radar files through full scientific pipeline.
+    """Processes radar files through the complete scientific analysis pipeline.
 
-    Runs in a thread. For each file: loads and regrids data, segments cells,
-    projects motion (frame 2+), analyzes cell properties, and stores results
-    to NetCDF (segmentation, projection) and SQLite (cell statistics).
+    This worker thread runs in the background, receiving filepaths from the
+    downloader queue and performing all scientific analysis: loading, regridding,
+    segmentation, motion projection, and cell statistics extraction.
 
-    Maintains 2-frame history to compute optical flow and register cells
-    across time steps. First frame has segmentation but no projections.
+    **Processing Pipeline:**
+
+    For each file, the processor performs (in order):
+
+    1. **Load & Regrid**: Reads NEXRAD Level-II data or cached gridded NetCDF,
+       converts to Cartesian grid using Cressman weighting and ARM Py-ART.
+
+    2. **Segmentation**: Identifies storm cells using reflectivity threshold
+       and morphological filtering. Outputs cell_labels array.
+
+    3. **Motion Projection** (frame 2+): Computes optical flow between current
+       and previous frame, projects cells forward by 1-5 timesteps. First frame
+       has no projections (only segmentation).
+
+    4. **Cell Analysis**: Extracts properties from each cell:
+       - Geometry: area, centroid (mass-weighted and geometric)
+       - Reflectivity: max, mean, 95th percentile
+       - Dimensions: length, width, aspect ratio
+       Stores in SQLite database for later analysis.
+
+    5. **Persistence**: Writes segmentation + projections to NetCDF
+       (analysis/{radar_id}_analysis_*_segmentation.nc) and queues file
+       for visualization.
+
+    **Output Files:**
+
+    - **Gridded NetCDF**: gridded/{radar_id}_*_gridded.nc (regridded data)
+    - **Analysis NetCDF**: analysis/{radar_id}_*_analysis_segmentation.nc
+      (segmentation + projections + flow fields)
+    - **SQLite Database**: analysis/{radar_id}_cells_statistics.db
+      (cell properties for all files)
+
+    **Database Schema:**
+
+    SQLite table `cells` (one row per detected cell):
+    - Temporal: time, time_volume_start, time_volume_end
+    - Identification: cell_label, radar_id, file_id
+    - Geometry: cell_area_sqkm, centroids (lat/lon and x/y)
+    - Reflectivity: max_dbz, mean_dbz, percentile_95
+    - Dimensions: length_km, width_km, aspect_ratio
+    - Motion: heading_x, heading_y, projection_distances (1-5 steps)
+
+    **Frame History:**
+
+    Maintains a 2-frame rolling window to compute optical flow. This enables
+    motion estimation between frame N and frame N+1. Frame 1 has only
+    segmentation; projections begin at frame 2.
+
+    **Thread Safety:**
+
+    Uses SQLite WAL mode for concurrent read access. Main thread can query
+    results while processor is still running.
+
+    Example usage (typically called by orchestrator)::
+
+        processor = RadarProcessor(
+            input_queue=downloader_queue,
+            config=config,
+            output_queue=plotter_queue
+        )
+        processor.start()
+        ...
+        processor.stop()
+        df = processor.get_results()
     """
 
     def __init__(self, input_queue: queue.Queue, config: Dict = None,
@@ -48,14 +110,38 @@ class RadarProcessor(threading.Thread):
         Parameters
         ----------
         input_queue : queue.Queue
-            Queue of filepaths from downloader thread.
+            Queue of filepaths from downloader thread. Processor pops filepaths
+            and processes them. None signals shutdown.
+
         config : dict, optional
-            Pipeline configuration including loader, segmenter, analyzer,
-            projector, and output_dirs. Uses PARAM_CONFIG if None.
+            Complete pipeline configuration. Required keys:
+            
+            - `global`: Variable/coordinate name mappings and z-level
+            - `regridder`: Grid parameters (shape, limits, weighting function)
+            - `segmenter`: Threshold, morphological settings, size filters
+            - `analyzer`: Which cell properties to compute
+            - `projector`: Motion estimation and projection steps
+            - `output_dirs`: Paths to save gridded, analysis, and logs
+            - `downloader`: Radar ID for file naming
+            
+            If None, uses PARAM_CONFIG (expert defaults).
+
         output_queue : queue.Queue, optional
-            Queue to notify plotter thread of new analysis files ready for visualization.
-        name : str
-            Thread name (default: "RadarProcessor").
+            Queue to send analysis files to plotter thread. One dict per file:
+            
+            - `segmentation_nc`: Path to analysis NetCDF file
+            - `radar_id`: Radar identifier
+            - `timestamp`: Datetime of the scan
+            
+            If None, no plotting occurs (analysis-only mode).
+
+        name : str, optional
+            Thread name for logging (default: "RadarProcessor").
+
+        Raises
+        ------
+        Exception
+            If database initialization fails or output directories don't exist.
         """
         super().__init__(daemon=True, name=name)
 
@@ -508,7 +594,16 @@ class RadarProcessor(threading.Thread):
         return True
 
     def run(self):
-        """Main processor loop: read queue, process files."""
+        """Main processor loop (runs in thread).
+
+        Continuously reads filepaths from input_queue, processes each file through
+        the complete scientific pipeline, and sends results to output_queue for
+        visualization. Exits when None (sentinel) is received.
+
+        Notes
+        -----
+        Called automatically by thread.start(). Do not call directly.
+        """
         logger.info("Processor started, waiting for files...")
 
         while not self.stopped():
@@ -535,12 +630,17 @@ class RadarProcessor(threading.Thread):
 
 
     def get_results(self) -> pd.DataFrame:
-        """Get accumulated results as DataFrame (thread-safe).
+        """Return all processed cell statistics as a DataFrame.
+
+        Thread-safe query of the SQLite database containing all cells extracted
+        from processed files. Can be called while processor is running (WAL mode
+        enables concurrent access).
 
         Returns
         -------
-        df : pd.DataFrame
-            DataFrame with all cells from database.
+        pd.DataFrame
+            One row per detected cell with columns for time, geometry, reflectivity,
+            motion, and projections. Empty DataFrame if no processing completed yet.
         """
         with self.output_lock:
             # Don't query before schema is created
@@ -554,12 +654,17 @@ class RadarProcessor(threading.Thread):
                 return pd.DataFrame()
 
     def save_results(self, filepath: str = None):
-        """Export results to Parquet.
+        """Export all cell statistics to Parquet file.
+
+        Creates a single Parquet file containing all cells from the SQLite
+        database. Parquet format is efficient for subsequent analysis with Pandas,
+        DuckDB, Polars, or other analytical tools.
 
         Parameters
         ----------
         filepath : str, optional
-            Output filepath. If None, uses config-derived path.
+            Output Parquet filepath. If None, uses:
+            `{output_dirs['analysis']}/{radar_id}_cells_statistics.parquet`
         """
         if filepath is None:
             filepath = get_output_path()

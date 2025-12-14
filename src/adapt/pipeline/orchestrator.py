@@ -19,23 +19,118 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrator:
-    """Orchestrates the three-thread pipeline: downloader → processor → plotter.
+    """Manages the multi-threaded radar processing pipeline.
 
-    Manages queue-based communication, thread lifecycle, and graceful shutdown.
-    Monitors queue depth and thread health. Handles both realtime and historical
-    processing modes with optional duration limits.
+    This is the main entry point for running ADAPT. It coordinates three
+    worker threads (downloader, processor, plotter) using queues for
+    inter-thread communication. The orchestrator handles startup, monitoring,
+    and graceful shutdown of the entire pipeline.
+
+    **Pipeline Architecture:**
+
+    1. **Downloader Thread**: Discovers and downloads NEXRAD Level-II files
+       from AWS in realtime or historical mode.
+
+    2. **Processor Thread**: Processes downloaded files through the full
+       scientific pipeline:
+       - Load and regrid Level-II data to Cartesian grid
+       - Segment cells using configurable threshold method
+       - Compute motion projections (frame 2 and beyond)
+       - Extract cell-level statistics
+       - Persist segmentation to NetCDF and statistics to SQLite
+
+    3. **Plotter Thread**: Generates visualization PNG files from analysis
+       results (reflectivity + segmentation + projections).
+
+    **Modes:**
+
+    - **Realtime**: Polls for latest files within a rolling time window
+      (e.g., "files from last 60 minutes"). Useful for operational monitoring.
+
+    - **Historical**: Downloads all files within a fixed time range
+      (start_time to end_time). Useful for batch reprocessing and research.
+
+    **Queue Management:**
+
+    Inter-thread queues have configurable size limits (default 100 items).
+    Larger queues enable higher throughput but use more memory. Smaller
+    queues provide backpressure (slow down downloader if processor falls behind).
+
+    **File Tracking:**
+
+    The FileProcessingTracker SQLite database records the state of each file
+    (downloaded, regridded, analyzed, plotted, or failed). This enables:
+    - Resumable processing (restart without reprocessing completed files)
+    - Progress tracking
+    - Failure recovery and debugging
+
+    **Logging:**
+
+    All output goes to both console and log file (logs/{radar_id}_pipeline.log).
+    Log level controlled via config: "DEBUG", "INFO", "WARNING", "ERROR".
+
+    Example usage::
+
+        from adapt.pipeline.orchestrator import PipelineOrchestrator
+        
+        config = {
+            "mode": "realtime",
+            "downloader": {"radar_id": "KDIX", ...},
+            "output_dirs": {...},
+            ...
+        }
+        
+        orch = PipelineOrchestrator(config)
+        orch.start(max_runtime=60)  # Run for 60 minutes then stop
     """
 
     def __init__(self, config: dict, max_queue_size: int = 100):
-        """Initialize orchestrator.
+        """Initialize orchestrator with pipeline configuration.
 
         Parameters
         ----------
         config : dict
-            Full pipeline configuration.
+            Complete pipeline configuration dictionary containing:
+            
+            - `mode` : str, "realtime" or "historical"
+                Processing mode. Realtime continuously monitors for new files.
+                Historical downloads all files within a time range then stops.
+            
+            - `base_dir` : str
+                Root output directory. Subdirectories created for nexrad/,
+                gridded/, analysis/, plots/, logs/.
+            
+            - `output_dirs` : dict
+                Pre-computed output directory paths. Created by
+                `setup_output_directories()`.
+            
+            - `downloader` : dict
+                Download configuration:
+                
+                - `radar_id` : str, e.g. "KDIX"
+                - `output_dir` : str, directory to save Level-II files
+                - `latest_n` : int, realtime mode only. Keep last N files.
+                - `minutes` : int, realtime mode. Rolling window in minutes.
+                - `sleep_interval` : int, seconds between polls.
+                - `start_time` : str, historical mode. ISO timestamp.
+                - `end_time` : str, historical mode. ISO timestamp.
+            
+            - `regridder`, `segmenter`, `analyzer`, `projector`, `visualization` : dict
+                Configuration for each processing stage (passed to worker threads).
+            
+            - `logging` : dict
+                - `level` : str, "DEBUG", "INFO", "WARNING", "ERROR"
+            
+            - `file_tracker` : FileProcessingTracker, optional
+                If provided, used to track file processing state. Created
+                internally if not provided.
+
         max_queue_size : int, optional
-            Maximum size of inter-thread queues before backpressure (default: 100).
-            Controls memory usage and processing lag in realtime mode.
+            Maximum size of inter-thread communication queues (default: 100).
+            
+            - Larger queues (200+): Higher throughput, more memory, less backpressure
+            - Smaller queues (10-30): Lower memory, stronger backpressure, risk of stalls
+            - Balance depends on your file processing speed vs download speed
         """
         self.config = config
         self.max_queue_size = max_queue_size
@@ -111,13 +206,48 @@ class PipelineOrchestrator:
             logger.info("File tracker: %s", tracker_path)
 
     def start(self, max_runtime: Optional[int] = None):
-        """Start the pipeline and block until completion or interrupt.
+        """Start the pipeline and run until completion or user interrupt.
+
+        This is a blocking call that starts the downloader, processor, and plotter
+        threads, then enters a monitoring loop. The loop logs status every 30 seconds
+        and handles mode-specific exit conditions.
+
+        **Realtime Mode:** Runs until you press Ctrl+C or max_runtime is exceeded.
+
+        **Historical Mode:** Automatically exits when all files within the
+        start_time/end_time range are queued, processed, and plotted.
+
+        All output (console + file) logged to logs/{radar_id}_pipeline.log
+        at the level specified in config["logging"]["level"].
 
         Parameters
         ----------
         max_runtime : int, optional
-            Maximum runtime in minutes. None runs until KeyboardInterrupt.
-            Used in realtime mode to limit processing duration.
+            Maximum runtime in minutes (realtime mode only).
+            If None, runs until KeyboardInterrupt (Ctrl+C).
+            Ignored in historical mode (uses file completion instead).
+
+        Raises
+        ------
+        KeyboardInterrupt
+            User pressed Ctrl+C. Pipeline stops gracefully.
+
+        Notes
+        -----
+        To stop the pipeline gracefully, press Ctrl+C. Do NOT force-kill.
+        The stop() method is called automatically to close threads and save results.
+
+        Examples
+        --------
+        Run for 60 minutes in realtime mode::
+
+            orch = PipelineOrchestrator(config)
+            orch.start(max_runtime=60)
+
+        Run historical mode until all files processed::
+
+            orch = PipelineOrchestrator(config)  # mode="historical" in config
+            orch.start()  # Runs until all files between start_time/end_time processed
         """
         self._setup_logging()
 
@@ -258,10 +388,29 @@ class PipelineOrchestrator:
                 break
 
     def stop(self):
-        """Gracefully stop all threads and finalize results.
+        """Stop the pipeline gracefully and finalize all results.
 
-        Stops downloader, processor, and plotter threads with timeouts.
-        Saves results to database and logs summary statistics.
+        Called automatically when start() exits (either by user interrupt or
+        mode-specific completion). Safe to call multiple times.
+
+        **Operations:**
+
+        1. Signals all worker threads to stop
+        2. Waits up to 5 seconds for each thread to finish
+        3. Saves accumulated cell statistics to SQLite database
+        4. Generates final summary statistics (total cells, completion times)
+        5. Closes database connections
+        6. Logs pipeline runtime and file processing statistics
+
+        Notes
+        -----
+        This method should complete within ~20 seconds. If a thread does not
+        respond to the stop signal within its timeout, a warning is logged but
+        the shutdown continues (graceful degradation).
+
+        Files processed before the final save() will have their statistics
+        in the SQLite database. The database is safe to query even while the
+        pipeline is running (uses WAL mode).
         """
         if self._stop_event:
             return
