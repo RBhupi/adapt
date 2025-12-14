@@ -2,7 +2,7 @@ name: adapt
 channels:
   - conda-forge
 dependencies:
-  - python>=3.8
+  - python=3.11  # or 3.12, overridden by CI matrix
   - numpy
   - xarray
   - pandas
@@ -14,8 +14,14 @@ dependencies:
   - netCDF4
   - tqdm
   - h5py
+  - proj
+  - hdf5
+  - libnetcdf
   - pip
+  - pytest
+  - pytest-cov
   - pip:
       - nexradaws
       - contextily
       - pyproj
+      - -e .[dev]

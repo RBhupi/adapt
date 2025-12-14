@@ -32,13 +32,7 @@ jobs:
               - conda-forge
             channel_priority: strict
 
-      # --- System dependencies (needed by arm_pyart, cartopy, proj) ---
-      - name: Install system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libproj-dev proj-data proj-bin \
-            libhdf5-dev libnetcdf-dev
+
 
       # --- Install package in editable mode ---
       - name: Install ADAPT (dev mode)
