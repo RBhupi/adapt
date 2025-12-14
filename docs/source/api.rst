@@ -9,7 +9,7 @@ Cell Analyzer
 
 .. automodule:: adapt.radar.cell_analyzer
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Cell Projector
@@ -17,7 +17,7 @@ Cell Projector
 
 .. automodule:: adapt.radar.cell_projector
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Cell Segmenter
@@ -25,7 +25,7 @@ Cell Segmenter
 
 .. automodule:: adapt.radar.cell_segmenter
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Downloader
@@ -33,7 +33,7 @@ Downloader
 
 .. automodule:: adapt.radar.downloader
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Loader
@@ -41,7 +41,7 @@ Loader
 
 .. automodule:: adapt.radar.loader
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Radar Utils
@@ -49,7 +49,7 @@ Radar Utils
 
 .. automodule:: adapt.radar.radar_utils
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Pipeline Module
@@ -60,7 +60,7 @@ File Tracker
 
 .. automodule:: adapt.pipeline.file_tracker
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Orchestrator
@@ -68,7 +68,7 @@ Orchestrator
 
 .. automodule:: adapt.pipeline.orchestrator
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Processor
@@ -76,7 +76,7 @@ Processor
 
 .. automodule:: adapt.pipeline.processor
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:
 
 Visualization Module
@@ -87,5 +87,5 @@ Plotter
 
 .. automodule:: adapt.visualization.plotter
    :members:
-   :undoc-members:
+   :private-members:
    :show-inheritance:

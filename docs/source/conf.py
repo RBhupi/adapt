@@ -23,6 +23,15 @@ extensions = [
 templates_path = ['_templates']
 exclude_patterns = []
 
+# -- Autodoc configuration ---------------------------------------------------
+autodoc_default_options = {
+    'members': True,
+    'undoc-members': True,
+    'show-inheritance': True,
+    'member-order': 'bysource',
+}
+autodoc_typehints = 'description'
+
 
 
 # -- Options for HTML output -------------------------------------------------
