@@ -8,7 +8,7 @@ build:
   tools:
     python: "3.11"
   jobs:
-    post_installation: pip install -e .
+    post_install: pip install -e .
 
 python:
   install:
