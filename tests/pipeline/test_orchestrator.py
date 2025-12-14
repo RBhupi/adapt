@@ -7,12 +7,19 @@ def test_orchestrator_initialization(basic_config):
     assert orch.plotter_queue is not None
 
 
-def test_orchestrator_logging_and_tracker(basic_config):
+from adapt.pipeline.orchestrator import PipelineOrchestrator
+from adapt.setup_directories import setup_output_directories
+
+def test_orchestrator_logging_and_tracker(tmp_path, basic_config):
+    output_dirs = setup_output_directories(tmp_path)
+    basic_config["output_dirs"] = output_dirs
+
     orch = PipelineOrchestrator(basic_config)
     orch._setup_logging()
 
     assert orch.tracker is not None
     assert basic_config["file_tracker"] is orch.tracker
+
 
 def test_orchestrator_queue_wiring(basic_config):
     orch = PipelineOrchestrator(basic_config)

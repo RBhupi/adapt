@@ -25,6 +25,7 @@ def test_loader_returns_none(monkeypatch, processor_queues, basic_config):
     assert ok is False
     assert out_q.empty()
 
+
 def test_processor_handles_loader_exception(monkeypatch, processor_queues, basic_config):
     in_q, out_q = processor_queues
     proc = RadarProcessor(in_q, basic_config, out_q)
@@ -44,30 +45,84 @@ def test_process_missing_file(basic_config):
     ok = proc.process_file("/does/not/exist")
     assert ok is False
 
-import xarray as xr
+
+# following test (test_processor_enqueues_when_netcdf_is_written) was most painful to write and pass .
+def make_fake_grid_ds(with_labels=True):
+    data = {
+        "reflectivity": (("y", "x"), np.ones((4, 4)))
+    }
+
+    if with_labels:
+        data["cell_labels"] = (("y", "x"), np.array([
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 2, 2],
+            [0, 0, 2, 2],
+        ]))
+
+    ds = xr.Dataset(
+        data,
+        coords={
+            "x": np.arange(4),
+            "y": np.arange(4),
+        },
+        attrs={"z_level_m": 2000}
+    )
+    return ds
+
 import numpy as np
-
-
-def test_processor_enqueues_when_load_succeeds(monkeypatch, processor_queues, basic_config):
+import xarray as xr
+def test_processor_enqueues_when_netcdf_is_written(
+    tmp_path,
+    monkeypatch,
+    processor_queues,
+    basic_config,
+):
     in_q, out_q = processor_queues
     proc = RadarProcessor(in_q, basic_config, out_q)
 
-    fake_ds_2d = xr.Dataset(
-        {"reflectivity": (("y", "x"), np.ones((4, 4)))},
-        attrs={"z_level_m": 2000}
-    )
-
-    monkeypatch.setattr(
-        proc,
-        "_load_and_regrid",
-        lambda filepath: (None, fake_ds_2d, "/fake/file.nc", None)
-    )
-
-    # bypass file existence
+    # ---- fake filesystem ----
     monkeypatch.setattr(
         "adapt.pipeline.processor.Path.exists",
         lambda self: True
     )
+
+    # ---- fake dataset ----
+    fake_ds = make_fake_grid_ds(with_labels=True)
+
+    # ---- patch loader ----
+    monkeypatch.setattr(
+        proc,
+        "_load_and_regrid",
+        lambda filepath: (
+            fake_ds,
+            fake_ds,
+            tmp_path / "grid.nc",
+            None,
+        )
+    )
+
+    # ---- identity segmentation ----
+    monkeypatch.setattr(proc.segmenter, "segment", lambda ds: ds)
+
+    # ---- no-op projections ----
+    monkeypatch.setattr(proc, "_compute_projections", lambda ds, _: ds)
+
+    # ---- real NetCDF save ----
+    seg_path = tmp_path / "seg.nc"
+
+    from tests.helpers.fake_netcdf import write_fake_segmentation_netcdf
+
+    monkeypatch.setattr(
+        proc,
+        "_save_segmentation_netcdf",
+        lambda *a, **k: str(
+            write_fake_segmentation_netcdf(seg_path)
+        )
+    )
+
+    # ---- analysis succeeds ----
+    monkeypatch.setattr(proc, "_analyze_and_save", lambda *a, **k: True)
 
     ok = proc.process_file("/fake/file")
 
