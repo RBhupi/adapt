@@ -16,7 +16,6 @@ dependencies:
   - h5py
   - pip
   - pip:
-      - opencv-python
       - nexradaws
       - contextily
       - pyproj

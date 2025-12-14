@@ -1,45 +1,61 @@
-name: ADAPT CI
+name: ADAPT Continuous Integration
 
 on:
   push:
-    branches: [main, working]
+    branches: [main, devel]
   pull_request:
-    branches: [main]
+    branches: [main, devel]
 
 jobs:
   tests:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # --- Micromamba setup ---
+      - name: Set up micromamba
+        uses: mamba-org/setup-micromamba@v1
         with:
+          environment-file: environment.yml
           python-version: ${{ matrix.python-version }}
+          cache-environment: true
+          init-shell: bash
+          condarc: |
+            channels:
+              - conda-forge
+            channel_priority: strict
 
-      - name: Install system dependencies for arm_pyart
+      # --- System dependencies (needed by arm_pyart, cartopy, proj) ---
+      - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libproj-dev proj-data proj-bin libhdf5-dev libnetcdf-dev
+          sudo apt-get install -y \
+            libproj-dev proj-data proj-bin \
+            libhdf5-dev libnetcdf-dev
 
-      - name: Install package and dependencies
+      # --- Install package in editable mode ---
+      - name: Install ADAPT (dev mode)
+        shell: bash -l {0}
         run: |
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -e .[dev]
 
-      - name: Run tests (unit + pipeline)
+      # --- Run tests ---
+      - name: Run test suite
+        shell: bash -l {0}
         run: |
           pytest -m "not integration" --cov=adapt
 
-      - name: Upload coverage report
+      # --- Upload coverage ---
+      - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python-version }}
           path: .coverage
-
