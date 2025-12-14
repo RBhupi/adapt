@@ -23,7 +23,3 @@ sphinx:
 formats:
   - pdf
   - epub
-
-# Redirect to the main documentation
-redirects:
-  old-page: new-page
