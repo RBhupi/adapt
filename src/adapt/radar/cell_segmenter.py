@@ -23,7 +23,7 @@ class RadarCellSegmenter:
         # Pre-load config parameters
         self.threshold = config.get("threshold", 30)
         # @TODO I used closing, may not required now. I will test it again later.
-        self.kernel_size = config.get("closing_kernel", (2, 2))
+        self.kernel_size = config.get("closing_kernel", (1, 1))
         self.filter_by_size = config.get("filter_by_size", True)
         self.min_gridpoints = config.get("min_cellsize_gridpoint", 5)
         self.max_gridpoints = config.get("max_cellsize_gridpoint", None)
