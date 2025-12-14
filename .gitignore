@@ -27,6 +27,11 @@ var/
 # Installer logs
 debug.log
 
+# Sphinx documentation
+docs/build/
+docs/_build/
+docs/.sphinx/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
