@@ -12,6 +12,8 @@ from pathlib import Path
 
 from nexradaws import NexradAwsInterface
 
+__all__ = ['AwsNexradDownloader']
+
 logger = logging.getLogger(__name__)
 
 

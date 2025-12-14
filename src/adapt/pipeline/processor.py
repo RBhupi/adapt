@@ -26,6 +26,8 @@ from adapt.radar.cell_analyzer import RadarCellAnalyzer
 from adapt.radar.cell_projector import RadarCellProjector
 from adapt.radar.radar_utils import compute_all_cell_centroids
 
+__all__ = ['RadarProcessor']
+
 logger = logging.getLogger(__name__)
 
 

@@ -21,6 +21,8 @@ import pyart
 
 import xarray as xr
 
+__all__ = ['RadarDataLoader']
+
 logger = logging.getLogger(__name__)
 
 class RadarDataLoader:

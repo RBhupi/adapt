@@ -27,6 +27,8 @@ import xarray as xr
 from scipy.ndimage import center_of_mass
 from skimage.measure import regionprops
 
+__all__ = ['RadarCellAnalyzer']
+
 logger = logging.getLogger(__name__)
 
 # Suppress HDF5 diagnostic error messages

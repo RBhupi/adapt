@@ -45,9 +45,13 @@ autodoc_default_options = {
     'show-inheritance': True,
     'undoc-members': False,
     'show-source': False,
+    'imported-members': False,  # Don't document imported classes from other modules
 }
 autodoc_typehints = 'description'
 autodoc_preserve_defaults = True
+
+# Don't include special members from imported modules
+autodoc_mock_imports = []  # List any packages that can't be imported
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output

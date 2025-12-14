@@ -15,6 +15,8 @@ from adapt.pipeline.processor import RadarProcessor
 from adapt.pipeline.file_tracker import FileProcessingTracker
 from adapt.visualization.plotter import PlotterThread
 
+__all__ = ['PipelineOrchestrator']
+
 logger = logging.getLogger(__name__)
 
 
