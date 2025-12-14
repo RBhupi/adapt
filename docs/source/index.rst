@@ -6,6 +6,14 @@
 ADAPT documentation
 ===================
 
+.. warning::
+
+   **⚠️ DEVELOPMENT & PLACEHOLDER DOCUMENTATION**
+   
+   This documentation is currently under development and serves as a placeholder. 
+   It is **NOT** suitable for operational use. Features, APIs, and configurations 
+   may change significantly without notice. Use at your own risk.
+
 ARM Radar Adaptive Scanning - A Python toolkit for advanced radar data processing.
 
 
