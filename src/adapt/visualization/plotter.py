@@ -1,6 +1,7 @@
-"""
-Radar plotting module. I don't know if this should be in the 
-orchetrator or a separate  thing altogether. This did not turn out the way I thought but Keeping it for now.
+"""Radar segmentation and projection visualization.
+
+Renders reflectivity + cell segmentation + motion projections to PNG.
+Supports threaded queue-based processing for pipeline integration.
 """
 
 import threading
@@ -28,10 +29,25 @@ logger = logging.getLogger(__name__)
 
 
 class RadarPlotter:
-    """Refactored radar plotter with modular functions."""
+    """Generates segmentation and projection plots from analysis datasets.
+
+    Renders two-panel plots: reflectivity with optional basemap + cell
+    segmentation contours + motion projections as colored vectors.
+    Configurable thresholds, colors, and output format (PNG, PDF, etc).
+    """
     
     def __init__(self, config: Dict = None, show_plots: bool = False):
-        """Init plotter with config."""
+        """Initialize plotter.
+
+        Parameters
+        ----------
+        config : dict, optional
+            Pipeline configuration with visualization section containing
+            dpi, figsize, basemap settings, and reflectivity thresholds.
+        show_plots : bool, optional
+            If True, display plots (uses interactive backend). Default False
+            (Agg backend for headless/file-only output).
+        """
         self.config = config or {}
         viz_config = self.config.get("visualization", {}) 
         
@@ -375,7 +391,26 @@ class RadarPlotter:
         frame_offset: int = 0,
         output_path: Optional[Path] = None,
     ) -> str:
-        """Two-panel plot: reflectivity + projections."""
+        """Generate two-panel reflectivity and segmentation plot.
+
+        Left panel: reflectivity with optical flow vectors.
+        Right panel: segmented cells with motion projections.
+
+        Parameters
+        ----------
+        ds : xr.Dataset
+            Analysis dataset with reflectivity, cell_labels, and optional
+            heading_x/heading_y (flow), cell_projections.
+        frame_offset : int, optional
+            Frame offset (unused, reserved for future multi-frame visualization).
+        output_path : Path, optional
+            Output PNG path. Auto-generated in /tmp if None.
+
+        Returns
+        -------
+        str
+            Path to saved PNG file.
+        """
         # Extract metadata
         radar_id = ds.attrs.get('radar_id', 'RADAR')
         timestamp = self._extract_timestamp(ds)
@@ -444,7 +479,22 @@ class RadarPlotter:
         segmentation_nc: Path,
         output_path: Optional[Path] = None,
     ) -> str:
-        """Plot from analysis NetCDF file."""
+        """Load analysis NetCDF and generate visualization.
+
+        Waits for file with retries (handles processor write delays).
+
+        Parameters
+        ----------
+        segmentation_nc : Path
+            Path to analysis NetCDF with segmentation and projections.
+        output_path : Path, optional
+            Output PNG path. Auto-generated if None.
+
+        Returns
+        -------
+        str
+            Path to saved PNG file.
+        """
         import time
         
         max_retries = 5
@@ -495,17 +545,36 @@ class RadarPlotter:
 
 
 class PlotterThread(threading.Thread):
-    """Threaded radar plotter from queue."""
-    
+    """Threaded plotter processing segmentation files from queue.
+
+    Reads analysis NetCDF files and generates PNG visualizations.
+    Updates file tracker on completion. Runs in daemon thread for
+    pipeline integration.
+    """
+
     def __init__(
         self,
         input_queue: queue.Queue,
         output_dirs: Dict,
         config: Dict = None,
         show_plots: bool = False,
-        name: str = "RadarPlotter",
+        name: str = 'RadarPlotter',
     ):
-        """Init plotter thread with queue."""
+        """Initialize plotter thread.
+
+        Parameters
+        ----------
+        input_queue : queue.Queue
+            Queue of analysis file paths from processor.
+        output_dirs : dict
+            Output directory paths for saving plots.
+        config : dict, optional
+            Pipeline configuration with visualization settings.
+        show_plots : bool, optional
+            Display plots (default False for headless mode).
+        name : str
+            Thread name (default: 'RadarPlotter').
+        """
         super().__init__(name=name, daemon=True)
         
         self.input_queue = input_queue
@@ -519,7 +588,11 @@ class PlotterThread(threading.Thread):
         logger.info(f"✓ {name} initialized")
     
     def run(self):
-        """Thread main loop."""
+        """Process files from queue until shutdown signal received.
+
+        Monitors input queue for analysis file paths and generates visualizations.
+        Logs errors but continues processing on per-file failures.
+        """
         logger.info(f"{self.name} started")
         
         while self.running:
@@ -585,7 +658,7 @@ class PlotterThread(threading.Thread):
                     tracker.mark_stage_complete(file_id, "plotted", error=str(e))
     
     def stop(self):
-        """Stop plotter thread."""
+        """Signal thread to stop and join gracefully."""
         self.running = False
         self.input_queue.put(None)
 

@@ -1,8 +1,7 @@
-"""Pipeline Orchestrator: Coordinates Downloader → Processor → Plotter.
+"""Multi-threaded pipeline orchestration.
 
-Manages the multi-threaded radar processing pipeline.
-
-Author: Bhupendra Raut
+Coordinates downloader, processor, and plotter threads with queue-based
+inter-thread communication. Manages lifecycle, monitoring, and graceful shutdown.
 """
 
 import queue
@@ -20,13 +19,11 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrator:
-    """Manages the three-thread pipeline: Downloader → Queue → Processor.
+    """Orchestrates the three-thread pipeline: downloader → processor → plotter.
 
-    Responsibilities:
-    - Initialize and start downloader and processor threads
-    - Monitor queue depth and thread health
-    - Handle graceful shutdown
-    - Logging and error recovery
+    Manages queue-based communication, thread lifecycle, and graceful shutdown.
+    Monitors queue depth and thread health. Handles both realtime and historical
+    processing modes with optional duration limits.
     """
 
     def __init__(self, config: dict, max_queue_size: int = 100):
@@ -35,9 +32,10 @@ class PipelineOrchestrator:
         Parameters
         ----------
         config : dict
-            Full pipeline configuration (internal format).
-        max_queue_size : int
-            Maximum queue size before backpressure.
+            Full pipeline configuration.
+        max_queue_size : int, optional
+            Maximum size of inter-thread queues before backpressure (default: 100).
+            Controls memory usage and processing lag in realtime mode.
         """
         self.config = config
         self.max_queue_size = max_queue_size
@@ -60,7 +58,12 @@ class PipelineOrchestrator:
         self._max_duration = None
 
     def _setup_logging(self):
-        """Configure logging for the pipeline."""
+        """Configure logging and file tracking systems.
+
+        Initializes root logger with file and console handlers, creates output
+        directories, and sets up FileProcessingTracker for pipeline state management.
+        Log level and paths derived from config.
+        """
         #> loging level can be one of the config_parameters tat will decide if the loging is done
         #> frequently or only for important events, that is debug or info or only warnings and errors.
         log_level = self.config.get("logging", {}).get("level", "INFO")
@@ -108,12 +111,13 @@ class PipelineOrchestrator:
             logger.info("File tracker: %s", tracker_path)
 
     def start(self, max_runtime: Optional[int] = None):
-        """Start the pipeline.
+        """Start the pipeline and block until completion or interrupt.
 
         Parameters
         ----------
         max_runtime : int, optional
-            Maximum runtime in minutes. None = run until interrupted.
+            Maximum runtime in minutes. None runs until KeyboardInterrupt.
+            Used in realtime mode to limit processing duration.
         """
         self._setup_logging()
 
@@ -254,7 +258,11 @@ class PipelineOrchestrator:
                 break
 
     def stop(self):
-        """Stop the pipeline gracefully."""
+        """Gracefully stop all threads and finalize results.
+
+        Stops downloader, processor, and plotter threads with timeouts.
+        Saves results to database and logs summary statistics.
+        """
         if self._stop_event:
             return
 

@@ -1,23 +1,7 @@
-#!/usr/bin/env python3
-"""File Processing Tracker - SQLite-based state management.
+"""SQLite-based file processing state tracker.
 
-Tracks the processing state of radar files through the entire pipeline:
-1. Downloaded (NEXRAD Level-II file exists)
-2. Regridded (NetCDF created)
-3. Analyzed (cells extracted to database)
-4. Plotted (visualization generated)
-
-This enables:
-- Resumable processing (stop/restart without reprocessing)
-- Safe to rerun
-- Progress tracking
-- Debugging (find stuck/failed files). Not tested yet.
-
-@TODO: Need to reprocess the files deleted from disk after a restart even 
-if they are marked as completed. This will be needed for both regridding and analysis stages.
-@TODO: Add hash verification later, here or somewhere else. 
-@TODO: Need to check if AWS API provides ETag or checksum.
-Author: Bhupendra Raut
+Tracks radar files through pipeline stages (downloaded, regridded, analyzed, plotted).
+Enables idempotent processing with stop/restart, progress tracking, and failure recovery.
 """
 
 import sqlite3
@@ -31,43 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class FileProcessingTracker:
-    """Tracks file processing state across pipeline stages.
+    """Tracks file state and lifecycle across pipeline stages.
 
-    Database Schema:
-    ----------------
-    CREATE TABLE file_processing (
-        file_id TEXT PRIMARY KEY,              -- Unique filename (e.g., KHTX20250305_000310_V06)
-        radar_id TEXT NOT NULL,                -- Radar identifier (e.g., KHTX)
-        scan_time TEXT NOT NULL,               -- Scan timestamp (ISO format)
-
-        -- File paths
-        nexrad_path TEXT,                      -- Original Level-II file
-        gridnc_path TEXT,                      -- Regridded NetCDF
-        analysis_path TEXT,                    -- Analysis NetCDF (segmentation and projection)
-        plot_path TEXT,                        -- Plot PNG
-
-        -- Processing stages (timestamps)
-        #> good this is nice
-        downloaded_at TEXT,                    -- When file was downloaded/found
-        regridded_at TEXT,                     -- When regridded to NetCDF
-        analyzed_at TEXT,                      -- When cells were analyzed
-        plotted_at TEXT,                       -- When plot was generated
-
-        -- Status
-        status TEXT DEFAULT 'pending',         -- pending, processing, completed, failed
-        error_message TEXT,                    -- Error details if failed
-
-        -- Metadata
-        file_size_mb REAL,                     -- Original file size
-        num_cells INTEGER,                     -- Number of cells detected
-
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX idx_radar_id ON file_processing(radar_id);
-    CREATE INDEX idx_status ON file_processing(status);
-    CREATE INDEX idx_scan_time ON file_processing(scan_time);
+    Records downloads, regridding, analysis, and visualization completion.
+    Enables resumable processing: stopped jobs can restart without reprocessing
+    completed files. Thread-safe via internal locking.
     """
 
     def __init__(self, db_path: Path | str):
@@ -76,7 +28,8 @@ class FileProcessingTracker:
         Parameters
         ----------
         db_path : Path or str
-            Path to SQLite database file (will be created if doesn't exist)
+            Path to SQLite database file. Created if doesn't exist.
+            Typically: output_dirs/analysis/{radar_id}_file_tracker.db
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

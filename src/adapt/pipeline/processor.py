@@ -1,12 +1,8 @@
-#!/usr/bin/env python3
-"""Radar Data Processor: segmentation, and projection and analysis
+"""Radar data processing pipeline.
 
-Receives radar filepaths from queue, processes through the pipeline:
-read → regrid → segment →  project → analyze → save
-
-@TODO: NEed to simplify the logic.
-
-Author: Bhupendra Raut
+Processes radar files through segmentation, projection, and analysis stages.
+Reads Level-II data or gridded NetCDF, segments cells, projects motion,
+computes statistics, and persists results to NetCDF and SQLite.
 """
 
 import logging
@@ -34,22 +30,14 @@ logger = logging.getLogger(__name__)
 
 
 class RadarProcessor(threading.Thread):
-    """#> Processes radar data: segment → analyze → project → output.
+    """Processes radar files through full scientific pipeline.
 
-    #> This class runs in Thread B and performs the full scientific pipeline:
-    1. Read the netcdf gridded file if already processed and availbale, else read Level-II files and regrid. all this is done via RadarDataLoader, the grid_ds is then provided for futher processing.
-    2. Segment cells via RadarCellSegmenter, - extract the z_leve for entire file, keep all the attributes in the ds and then call segmenter. segmenter gives the same Ddatset back with added fields.
-    3. Regsiter and Project cells forward via RadarCellProjector, - segmentation ds will be input to this stage and output will be the same DS with added fields, like flow, and added projected cells with required number of ofsset dims. Additional calculation we do to generate the registration labels for the cells in image 1 to image2,
-    that mean, we now keep these registration and projections in same array, showing projection (actually registration), that is from image 1, image2 at 0th index and other projections from that step onwards, and keep segmentation cell_labels as single 2d array showing only the current segmentions. So we will have, in each timestep, the, segmentaion lables array(t0, x, y), (results of segmentation for the given t0), and  projected lables array(offset, x,y), offset for t1, t1 and so on
-    projections will be 1-n, and offset for registration lables from t-1
-    to t0, will be 0, that is showing projection of objects from image 1 to image2 using the optical flow vectors from image1 to image2. This will also write this into the file to disk and send the signal to plotter queue that the file is ready to read and plot. Note the first file will not have projections or registrations calculation, so those values can be missing. the projection, motion and registration works from the frame 2, other things like segmentation will work for
-    the frame 1 and 2 both, so take care that we do not get error for not having two frame for the first frame, the missing data can be stored for the missing variables.
-    4. Analyze cell properties via RadarCellAnalyzer, this will take both the DS, grid_ds and analysis_ds and compute the properties and save them in the sqlite database.
-    5. Insert results into SQLite database
+    Runs in a thread. For each file: loads and regrids data, segments cells,
+    projects motion (frame 2+), analyzes cell properties, and stores results
+    to NetCDF (segmentation, projection) and SQLite (cell statistics).
 
-    SQLite provides efficient storage with ACID transactions and make possible to add
-    future tracking UID assignment via random updates.
-    Results can be exported to Parquet/duckdn for analysis.
+    Maintains 2-frame history to compute optical flow and register cells
+    across time steps. First frame has segmentation but no projections.
     """
 
     def __init__(self, input_queue: queue.Queue, config: Dict = None,
@@ -60,13 +48,14 @@ class RadarProcessor(threading.Thread):
         Parameters
         ----------
         input_queue : queue.Queue
-            Queue of filepaths from downloader.
+            Queue of filepaths from downloader thread.
         config : dict, optional
-            Pipeline configuration. If None, uses PARAM_CONFIG.
+            Pipeline configuration including loader, segmenter, analyzer,
+            projector, and output_dirs. Uses PARAM_CONFIG if None.
         output_queue : queue.Queue, optional
-            Queue to push segmentation results for visualization.
+            Queue to notify plotter thread of new analysis files ready for visualization.
         name : str
-            Thread name.
+            Thread name (default: "RadarProcessor").
         """
         super().__init__(daemon=True, name=name)
 
