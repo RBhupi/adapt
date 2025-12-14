@@ -73,7 +73,7 @@ def test_failure_sets_failed(tracker):
 
 def test_should_process_logic(tracker):
     file_id = "KTEST_0007"
-    tracker.register_file(file_id, "KTEST", datetime.utcnow())
+    tracker.register_file(file_id, "KTEST", datetime.now(timezone.utc))
 
     assert tracker.should_process(file_id, "analyzed") is True
 

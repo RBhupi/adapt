@@ -254,7 +254,7 @@ def get_plot_path(output_dirs, radar_id=None, plot_type="reflectivity", timestam
         timestamp = scan_time
     
     if timestamp is None:
-        timestamp = datetime.now()
+        timestamp = datetime.now(timezone.utc)
     elif isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     

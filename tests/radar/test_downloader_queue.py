@@ -1,6 +1,6 @@
 # tests/test_downloader_queue.py
 from queue import Queue
-from datetime import datetime
+from datetime import datetime, timezone
 
 from adapt.radar.downloader import AwsNexradDownloader
 
@@ -18,7 +18,7 @@ def test_notify_queue_puts_item(tmp_path):
 
     d._notify_queue(
         path=path,
-        scan_time=datetime.now(),
+        scan_time=datetime.now(timezone.utc),
         is_new=True,
     )
 

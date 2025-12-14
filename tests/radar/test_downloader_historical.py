@@ -37,9 +37,9 @@ def test_fetch_scans_filters_and_sorts(monkeypatch):
             self.scan_time = scan_time
 
     scans = [
-        FakeScan("file2", datetime(2024,1,1,1)),
-        FakeScan("file1_MDM", datetime(2024,1,1,0)),
-        FakeScan("file0", datetime(2024,1,1,0)),
+        FakeScan("file2", datetime(2024,1,1,1, tzinfo=timezone.utc)),
+        FakeScan("file1_MDM", datetime(2024,1,1,0, tzinfo=timezone.utc)),
+        FakeScan("file0", datetime(2024,1,1,0, tzinfo=timezone.utc)),
     ]
 
     d = AwsNexradDownloader({})
@@ -49,6 +49,6 @@ def test_fetch_scans_filters_and_sorts(monkeypatch):
         lambda *args, **kwargs: scans
     )
 
-    result = d._fetch_scans(datetime.now(), datetime.now())
+    result = d._fetch_scans(datetime.now(timezone.utc), datetime.now(timezone.utc))
     assert len(result) == 2
     assert result[0].key == "file0"
