@@ -24,7 +24,6 @@ jobs:
         uses: mamba-org/setup-micromamba@v1
         with:
           environment-file: environment.yml
-          python-version: ${{ matrix.python-version }}
           cache-environment: true
           init-shell: bash
           condarc: |
@@ -48,6 +47,9 @@ jobs:
           pytest -m "not integration" --cov=adapt
 
       # --- Upload coverage ---
+      - name: List files for coverage debug
+        run: ls -l
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
