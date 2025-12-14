@@ -4,11 +4,17 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 # -- Mock imports for RTD ---------------------------------------------------
-# Mock complex dependencies that aren't easily available on RTD
+# Mock complex dependencies that aren't easily available on PyPI
 from unittest.mock import MagicMock
 import sys
 
-MOCK_MODULES = ['pyart', 'pyart.io', 'pyart.graph', 'pyart.graph.radarmap']
+MOCK_MODULES = [
+    'pyart',
+    'pyart.io',
+    'pyart.graph',
+    'pyart.graph.radarmap',
+    'nexradaws',
+]
 for mod_name in MOCK_MODULES:
     sys.modules[mod_name] = MagicMock()
 
