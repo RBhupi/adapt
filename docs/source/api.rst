@@ -89,4 +89,3 @@ Plotter
    :members:
    :undoc-members: False
    :show-inheritance:
-   :show-inheritance:
