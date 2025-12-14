@@ -1,4 +1,4 @@
 sphinx>=7.0
-sphinx_rtd_theme>=2.0
+alabaster>=0.7.0
 recommonmark>=0.7.0
 myst-parser>=4.0.0

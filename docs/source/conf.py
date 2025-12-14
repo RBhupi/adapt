@@ -29,6 +29,7 @@ autodoc_default_options = {
     'member-order': 'bysource',
     'show-inheritance': True,
     'undoc-members': False,
+    'show-source': False,
 }
 autodoc_typehints = 'description'
 autodoc_preserve_defaults = True
@@ -36,10 +37,11 @@ autodoc_preserve_defaults = True
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'alabaster'
 html_static_path = ['_static']
 html_theme_options = {
-    'collapse_navigation': False,
-    'sticky_navigation': True,
-    'navigation_depth': 4,
+    'logo': 'logo.png',
+    'github_user': 'RBhupi',
+    'github_repo': 'adapt',
+    'github_button': True,
 }
