@@ -3,6 +3,15 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+# -- Mock imports for RTD ---------------------------------------------------
+# Mock complex dependencies that aren't easily available on RTD
+from unittest.mock import MagicMock
+import sys
+
+MOCK_MODULES = ['pyart', 'pyart.io', 'pyart.graph', 'pyart.graph.radarmap']
+for mod_name in MOCK_MODULES:
+    sys.modules[mod_name] = MagicMock()
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
