@@ -18,23 +18,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Miniconda (for arm_pyart)
+        uses: conda-incubator/setup-miniconda@v2
         with:
           python-version: ${{ matrix.python-version }}
+          auto-activate-base: false
+          channels: conda-forge
+          enable-mamba: true
 
-      - name: Install system dependencies
+      - name: Create conda env, install arm_pyart and run tests
+        shell: bash -l {0}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libproj-dev proj-data proj-bin
-
-      - name: Install package
-        run: |
+          source "$(conda info --base)/etc/profile.d/conda.sh"
+          mamba create -n adapt-test -y python=${{ matrix.python-version }} -c conda-forge arm_pyart proj hdf5 netcdf4 pip
+          conda activate adapt-test
           python -m pip install --upgrade pip
           pip install -e .[dev]
-
-      - name: Run tests (unit + pipeline)
-        run: |
           pytest -m "not integration" --cov=adapt
 
       - name: Upload coverage report

@@ -38,6 +38,7 @@ dev = [
   "pytest-cov",
   "xarray",
   "numpy",
+  "arm_pyart",
 ]
 
 docs = [
