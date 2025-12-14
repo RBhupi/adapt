@@ -41,10 +41,20 @@ jobs:
           pip install -e .[dev]
 
       # --- Run tests ---
+
+      - name: Show working directory before tests
+        run: pwd
+
+      - name: List files before tests
+        run: ls -al
+
       - name: Run test suite
         shell: bash -l {0}
         run: |
-          pytest -m "not integration" --cov=adapt
+          pytest -m "not integration" --cov=src/adapt
+
+      - name: List files after tests
+        run: ls -al
 
       # --- Upload coverage ---
       - name: List files for coverage debug
