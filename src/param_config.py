@@ -1,4 +1,4 @@
-"""ADAPT Expert Configuration.
+"""`Adapt` Expert Configuration.
 
 Advanced pipeline settings for optical flow, visualization, and algorithms.
 Most users should only modify scripts/user_config.py
