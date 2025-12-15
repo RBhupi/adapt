@@ -1,4 +1,4 @@
-"""ADAPT User Configuration.
+""" ``Adapt`` User Configuration.
 
 This is the user-facing configuration file. Modify settings here to customize
 the pipeline behavior. Advanced settings are in src/expert_config.py

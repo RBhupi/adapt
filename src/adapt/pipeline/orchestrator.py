@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class PipelineOrchestrator:
     """Manages the multi-threaded radar processing pipeline.
 
-    This is the main entry point for running `adapt`. It coordinates three
+    This is the main entry point for running ``adapt``. It coordinates three
     worker threads (downloader, processor, plotter) using queues for
     inter-thread communication. The orchestrator handles startup, monitoring,
     and graceful shutdown of the entire pipeline.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`Adapt` NEXRAD Radar Processing Pipeline Runner.
+"""``Adapt`` NEXRAD Radar Processing Pipeline Runner.
 
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py

@@ -1,4 +1,4 @@
-"""`Adapt` - Automated Detection And Projection of storm cells using Tracking.
+"""``Adapt`` - Automated Detection And Projection of storm cells using Tracking.
 
 Subpackages:
 - radar: Data loading, segmentation, analysis
