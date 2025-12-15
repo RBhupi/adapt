@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class PipelineOrchestrator:
     """Manages the multi-threaded radar processing pipeline.
 
-    This is the main entry point for running ADAPT. It coordinates three
+    This is the main entry point for running `adapt`. It coordinates three
     worker threads (downloader, processor, plotter) using queues for
     inter-thread communication. The orchestrator handles startup, monitoring,
     and graceful shutdown of the entire pipeline.
@@ -134,6 +134,7 @@ class PipelineOrchestrator:
             - Smaller queues (10-30): Lower memory, stronger backpressure, risk of stalls
             - Balance depends on your file processing speed vs download speed
         """
+        # TODO: We will use pydantic for config validation later.
         self.config = config
         self.max_queue_size = max_queue_size
 
