@@ -23,6 +23,8 @@ import xarray as xr
 import numpy as np
 import logging
 
+__all__ = ['RadarCellSegmenter']
+
 logger = logging.getLogger(__name__)
 
 

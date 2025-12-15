@@ -30,6 +30,8 @@ except ImportError:
     convex_hull_image = None
     binary_closing = None
 
+__all__ = ['compute_all_cell_centroids']
+
 logger = logging.getLogger(__name__)
 
 

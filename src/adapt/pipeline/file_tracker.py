@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List
 import threading
 
+__all__ = ['FileProcessingTracker']
+
 logger = logging.getLogger(__name__)
 
 

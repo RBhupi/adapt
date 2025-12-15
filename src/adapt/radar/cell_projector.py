@@ -24,6 +24,8 @@ import cv2
 from scipy.spatial import Delaunay
 from scipy.ndimage import binary_dilation
 
+__all__ = ['RadarCellProjector']
+
 logger = logging.getLogger(__name__)
 
 # @TODO: When the cells are tiny, the qhull fails. We can use convex hull instead. 

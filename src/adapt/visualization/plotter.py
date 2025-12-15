@@ -25,6 +25,8 @@ try:
 except ImportError:
     CONTEXTILY_AVAILABLE = False
 
+__all__ = ['RadarPlotter', 'PlotterThread']
+
 logger = logging.getLogger(__name__)
 
 
