@@ -1,4 +1,4 @@
-name: ADAPT Continuous Integration
+name: Adapt Continuous Integration
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
 
 
       # --- Install package in editable mode ---
-      - name: Install ADAPT (dev mode)
+      - name: Install Adapt (dev mode)
         shell: bash -l {0}
         run: |
           pip install --upgrade pip

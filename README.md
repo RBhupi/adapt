@@ -1,4 +1,4 @@
-# ADAPT: A real-time weather radar data processing platform designed to guide adaptive scan strategy.
+# `Adapt`: A real-time weather radar data processing platform designed to guide adaptive scan strategy.
 
 ** Alpha version – currently in development and internal testing. **
 

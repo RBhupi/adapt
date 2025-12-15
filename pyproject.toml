@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "adapt"
 version = "0.1.0"
-description = "ADAPT is currently in active development and internal testing as part of ongoing research into adaptive radar scanning. Supported by the U.S. Department of Energy as part of the Atmospheric Radiation Measurement (ARM) Research Facility, an Office of Science user facility."
+description = "Adapt is currently in active development and internal testing as part of ongoing research into adaptive radar scanning. Supported by the U.S. Department of Energy as part of the Atmospheric Radiation Measurement (ARM) Research Facility, an Office of Science user facility."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [

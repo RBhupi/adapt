@@ -87,6 +87,7 @@ class RadarPlotter:
             If True, display plots (uses interactive backend). Default False
             (Agg backend for headless/file-only output).
         """
+
         self.config = config or {}
         viz_config = self.config.get("visualization", {}) 
         

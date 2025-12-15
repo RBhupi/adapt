@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADAPT NEXRAD Radar Processing Pipeline Runner.
+"""`Adapt` NEXRAD Radar Processing Pipeline Runner.
 
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py
@@ -107,7 +107,7 @@ def user_to_internal_config(user: dict) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run ADAPT radar processing pipeline")
+    parser = argparse.ArgumentParser(description="Run the adapt radar processing pipeline")
     parser.add_argument("config", help="Path to config file")
     parser.add_argument("--radar", help="Override radar ID")
     parser.add_argument("--mode", choices=["realtime", "historical"], help="Override mode")
@@ -153,7 +153,7 @@ def main():
     
     # Print summary
     print(f"\n{'='*60}")
-    print("ADAPT RADAR PROCESSING PIPELINE")
+    print("Adapt radar processing pipeline")
     print('='*60)
     print(f"Config: {args.config}")
     print(f"Radar:  {config['downloader']['radar_id']}")
