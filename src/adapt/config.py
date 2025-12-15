@@ -1,4 +1,4 @@
-"""Internal configuration defaults for `Adapt` pipeline.
+"""Internal configuration defaults for ``Adapt`` pipeline.
 
 This is a bridge file that imports from src/expert_config.py
 DO NOT EDIT - this file just enables: from adapt.config import PARAM_CONFIG
