@@ -35,6 +35,7 @@ class InternalDownloaderConfig(AdaptBaseModel):
     sleep_interval: int
     start_time: Optional[str]
     end_time: Optional[str]
+    min_file_size: int
 
 
 class InternalRegridderConfig(AdaptBaseModel):

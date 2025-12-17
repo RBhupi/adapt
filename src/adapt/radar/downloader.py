@@ -133,7 +133,7 @@ class AwsNexradDownloader(threading.Thread):
         self._stop_event = threading.Event()
         self._known_files = set()
         self._known_files_lock = threading.Lock()
-        self._min_file_size = 1024  # bytes
+        self._min_file_size = config.downloader.min_file_size
 
         # Historical mode tracking
         self._historical_complete = threading.Event()
@@ -298,7 +298,7 @@ class AwsNexradDownloader(threading.Thread):
 
         while not self.stopped():
             try:
-                self.download_task()
+                self._download_task()
             except Exception as e:
                 logger.exception("Download task failed")
 
@@ -326,7 +326,7 @@ class AwsNexradDownloader(threading.Thread):
     # Download task - dispatches to realtime or historical
     # ========================================================================
 
-    def download_task(self) -> list:
+    def _download_task(self) -> list:
         """Execute a single download iteration (realtime or historical).
         
         Dispatches to appropriate download strategy based on mode:
@@ -350,12 +350,6 @@ class AwsNexradDownloader(threading.Thread):
         - All queued files (new or existing) are put in result_queue
         - In historical mode: after one complete iteration, completion
           is marked (but loop continues to allow processing time)
-        
-        Examples
-        --------
-        >>> downloader = AwsNexradDownloader(config, queue)
-        >>> new_files = downloader.download_task()
-        >>> print(f"Downloaded {len(new_files)} new files")
         """
         if self.is_historical_mode():
             return self._download_historical()
@@ -367,6 +361,8 @@ class AwsNexradDownloader(threading.Thread):
         start, end = self._parse_time_range()
         logger.info("Historical: %s to %s", start, end)
 
+        self._check_radar_available(start, end)
+
         scans = self._fetch_scans(start, end)
         if not scans:
             self._historical_complete.set()
@@ -377,12 +373,12 @@ class AwsNexradDownloader(threading.Thread):
 
     def _download_realtime(self) -> list:
         """Download latest files for realtime mode."""
-
-        # in _download_realtime
         end = self._clock()
         start = end - timedelta(minutes=self.minutes)
 
         logger.info("Realtime: last %d min (%s to %s)", self.minutes, start, end)
+
+        self._check_radar_available(end, end)
 
         scans = self._fetch_scans(start, end)
         if not scans:
@@ -418,6 +414,47 @@ class AwsNexradDownloader(threading.Thread):
         except Exception as e:
             logger.error("Failed to fetch scans: %s", e)
             return []
+
+    # ========================================================================
+    # Radar availability helpers
+    # ========================================================================
+
+    def _check_radar_available(self, start: datetime, end: datetime) -> None:
+        """Check radar availability and log warnings.
+        
+        For a single date (start == end): warns if radar not found on that date.
+        For a date range: warns only if radar not found on any day in the range.
+        
+        Uses `self.conn.get_avail_radars(year, month, day)` from NexradAwsInterface.
+        Exceptions are logged at debug level and do not raise.
+        """
+        current = start.date()
+        end_date = end.date()
+        found_on_any_day = False
+
+        while current <= end_date:
+            dt = datetime(current.year, current.month, current.day, tzinfo=timezone.utc)
+            y = dt.strftime("%Y")
+            m = dt.strftime("%m")
+            d = dt.strftime("%d")
+            try:
+                available = self.conn.get_avail_radars(y, m, d)
+                if self.radar_id in available:
+                    found_on_any_day = True
+                    break
+            except Exception:
+                logger.debug("Availability check failed for %s", dt)
+            current = current + timedelta(days=1)
+
+        # Warn if not found on any day
+        if not found_on_any_day:
+            logger.warning(
+                "⚠️ Radar %s not found in AWS for %s - %s."
+                " Downloader will continue polling for scans.",
+                self.radar_id,
+                start.date(),
+                end.date(),
+            )
 
     def _process_scans(self, scans: list) -> list:
         """Process list of scans: download if needed, queue only if file exists."""

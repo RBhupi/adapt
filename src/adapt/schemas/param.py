@@ -30,6 +30,7 @@ class DownloaderConfig(AdaptBaseModel):
     sleep_interval: int = Field(300, ge=1, description="Polling interval in seconds")
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+    min_file_size: int = Field(1024, ge=1, description="Minimum file size in bytes to consider valid")
 
 
 class RegridderConfig(AdaptBaseModel):
