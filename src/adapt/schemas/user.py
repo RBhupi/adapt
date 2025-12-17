@@ -152,7 +152,81 @@ class UserConfig(AdaptBaseModel):
     projector: Optional[UserProjectorConfig] = None
     
     model_config = AdaptBaseModel.model_config.copy()
-    model_config.update({"populate_by_name": True})
+    # Allow forgiving input dictionaries (ignore unknown legacy keys)
+    model_config.update({"populate_by_name": True, "extra": "ignore"})
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_input_keys(cls, values):
+        """Normalize legacy and uppercase keys before Pydantic validation.
+
+        This method maps common legacy UPPERCASE names and synonyms to the
+        canonical snake_case field names used by `UserConfig`. It leaves
+        nested dicts (e.g., `downloader`, `segmenter`) untouched so their
+        own model validators handle normalization.
+        Unknown keys are ignored (see model_config.extra='ignore').
+        """
+        if not isinstance(values, dict):
+            return values
+
+        key_map = {
+            # Operational keys
+            "MODE": "mode",
+            "RADAR": "radar_id",
+            "RADAR_ID": "radar_id",
+            "BASE_DIR": "base_dir",
+
+            # Realtime / polling
+            "LATEST_FILES": "latest_files",
+            "LATEST_N": "latest_files",
+            "LATEST_MINUTES": "latest_minutes",
+            "POLL_INTERVAL_SEC": "poll_interval_sec",
+            "SLEEP_INTERVAL": "poll_interval_sec",
+
+            # Historical
+            "START_TIME": "start_time",
+            "END_TIME": "end_time",
+
+            # Grid
+            "GRID_SHAPE": "grid_shape",
+            "GRID_LIMITS": "grid_limits",
+
+            # Segmenter
+            "Z_LEVEL": "z_level",
+            "REFLECTIVITY_VAR": "reflectivity_var",
+            "SEGMENTATION_METHOD": "segmentation_method",
+            "SEGMENTER_METHOD": "segmentation_method",
+            "THRESHOLD_DBZ": "threshold_dbz",
+            "MIN_CELL_SIZE": "min_cell_size",
+            "MAX_CELL_SIZE": "max_cell_size",
+
+            # Projection
+            "PROJECTION_METHOD": "projection_method",
+            "PROJECTION_STEPS": "projection_steps",
+        }
+
+        normalized: dict = {}
+        for k, v in values.items():
+            if not isinstance(k, str):
+                # Preserve non-string keys as-is
+                normalized[k] = v
+                continue
+
+            # Direct mapping for common legacy uppercase keys
+            if k in key_map:
+                normalized[key_map[k]] = v
+                continue
+
+            # Case-insensitive match: try uppercase form
+            up = k.upper()
+            if up in key_map:
+                normalized[key_map[up]] = v
+                continue
+
+            # Accept already-canonical names (snake_case or mixed)
+            normalized[k] = v
+
+        return normalized
     
     @field_validator("z_level", "threshold_dbz", mode="before")
     @classmethod
