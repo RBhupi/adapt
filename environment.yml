@@ -21,6 +21,7 @@ dependencies:
   - pytest
   - pytest-cov
   - pip:
+      - pydantic>=2.0
       - nexradaws
       - contextily
       - pyproj

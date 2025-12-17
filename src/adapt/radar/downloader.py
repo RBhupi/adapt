@@ -9,8 +9,12 @@ import time
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Optional, TYPE_CHECKING
 
 from nexradaws import NexradAwsInterface
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['AwsNexradDownloader']
 
@@ -63,34 +67,31 @@ class AwsNexradDownloader(threading.Thread):
     """
 
     def __init__(
-        self, config: dict, result_queue=None, conn=None, clock=None, sleeper=None
+        self, 
+        config: "InternalConfig",
+        output_dir: Path,
+        result_queue=None,
+        file_tracker=None,
+        conn=None,
+        clock=None,
+        sleeper=None
     ):
         """Initialize downloader.
 
         Parameters
         ----------
-        config : dict
-            Configuration dictionary with keys:
-
-            - `radar_id` : str, e.g. "KDIX", "KHTX"
-                NEXRAD radar identifier. Must match S3 bucket directory.
-
-            - `output_dir` : str
-                Local directory where Level-II files are saved.
-                Created if doesn't exist.
-
-            - Realtime Mode:
-                - `latest_n` : int, number of latest files to keep (default: 3)
-                - `minutes` : int, rolling window in minutes (default: 60)
-                - `sleep_interval` : int, seconds between polls (default: 30)
-
-            - Historical Mode (mutually exclusive with realtime):
-                - `start_time` : str, ISO timestamp (e.g., "2025-03-05T00:00:00Z")
-                - `end_time` : str, ISO timestamp (e.g., "2025-03-05T12:00:00Z")
-
+        config : InternalConfig
+            Fully validated runtime configuration.
+            
+        output_dir : Path
+            Local directory where Level-II files are saved (from output_dirs["nexrad"]).
+            
         result_queue : queue.Queue, optional
             Queue to push filepaths of downloaded files. Processor reads from
             this queue. If None, no downstream notification (download-only mode).
+            
+        file_tracker : FileProcessingTracker, optional
+            Optional file processing tracker to record download completion.
 
         conn : nexradaws.NexradAwsInterface, optional
             AWS S3 connection object. If None, creates new connection.
@@ -114,13 +115,14 @@ class AwsNexradDownloader(threading.Thread):
         super().__init__(daemon=True)
 
         self.config = config
-        self.radar_id = config.get("radar_id", "KLOT")
-        self.output_dir = Path(config.get("output_dir", "./data"))
-        self.sleep_interval = config.get("sleep_interval", 30)
-        self.latest_n = config.get("latest_n", 3)
-        self.minutes = config.get("minutes", 30)
-        self.start_time = config.get("start_time", None)
-        self.end_time = config.get("end_time", None)
+        self.radar_id = config.downloader.radar_id or "KLOT"
+        self.output_dir = Path(output_dir)
+        self.sleep_interval = config.downloader.sleep_interval
+        self.latest_n = config.downloader.latest_n
+        self.minutes = config.downloader.minutes
+        self.start_time = config.downloader.start_time
+        self.end_time = config.downloader.end_time
+        self.file_tracker = file_tracker
 
         self.result_queue = result_queue
         self.conn = conn or NexradAwsInterface()
@@ -515,7 +517,7 @@ class AwsNexradDownloader(threading.Thread):
 
         try:
             # Register with tracker if available
-            tracker = self.config.get("file_tracker")
+            tracker = self.file_tracker
             file_id = path.stem
             if tracker:
                 tracker.register_file(file_id, self.radar_id, scan_time, path)

@@ -22,6 +22,11 @@ Key capabilities:
 import xarray as xr
 import numpy as np
 import logging
+from typing import TYPE_CHECKING
+from scipy.ndimage import binary_closing, label
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarCellSegmenter']
 
@@ -99,66 +104,38 @@ class RadarCellSegmenter:
     >>> print(f"Found {ds_labeled['cell_labels'].max()} cells")
     """
 
-    def __init__(self, config: dict):
-        """Initialize segmenter with configuration.
-        
-        Parses all segmentation parameters from config and validates them.
-        Logs initialization parameters for debugging.
+    def __init__(self, config: "InternalConfig"):
+        """Initialize segmenter with validated configuration.
         
         Parameters
         ----------
-        config : dict
-            Configuration dictionary (see class docstring for full spec).
-            
-            Key parameters extracted:
-            
-            - `method` : str, default "threshold"
-                Currently only "threshold" is supported.
-            
-            - `threshold` : float, default 30
-                Reflectivity threshold in dBZ.
-            
-            - `closing_kernel` : tuple of int, default (1, 1)
-                Morphological closing footprint size.
-            
-            - `filter_by_size` : bool, default True
-                Enable cell size filtering.
-            
-            - `min_cellsize_gridpoint` : int, default 5
-                Minimum cell size in grid points.
-            
-            - `max_cellsize_gridpoint` : int or None, default None
-                Maximum cell size in grid points (None = no limit).
-            
-            - `global` : dict, optional
-                Sub-configuration with variable names.
+        config : InternalConfig
+            Fully validated runtime configuration.
         
         Notes
         -----
-        - All parameters use sensible defaults if missing
-        - Logs initialization info at INFO level
-        - Validates are deferred to segment() call (not here)
+        All parameters are read directly from config - no defaults,
+        no .get() calls, no validation. Configuration is already
+        complete and validated by Pydantic.
         
         Examples
         --------
-        >>> config = {
-        ...     "method": "threshold",
-        ...     "threshold": 30,
-        ...     "min_cellsize_gridpoint": 5,
-        ...     "closing_kernel": (3, 3)
-        ... }
+        >>> from adapt.schemas import resolve_config, ParamConfig
+        >>> config = resolve_config(ParamConfig())
         >>> segmenter = RadarCellSegmenter(config)
         """
         self.config = config
-        self.method = config.get("method", "threshold")
+        self.method = config.segmenter.method
+        self.threshold = config.segmenter.threshold
+        self.kernel_size = config.segmenter.closing_kernel
+        self.filter_by_size = config.segmenter.filter_by_size
+        self.min_gridpoints = config.segmenter.min_cellsize_gridpoint
+        self.max_gridpoints = config.segmenter.max_cellsize_gridpoint
         
-        # Pre-load config parameters
-        self.threshold = config.get("threshold", 30)
-        # @TODO I used closing, may not required now. I will test it again later.
-        self.kernel_size = config.get("closing_kernel", (1, 1))
-        self.filter_by_size = config.get("filter_by_size", True)
-        self.min_gridpoints = config.get("min_cellsize_gridpoint", 5)
-        self.max_gridpoints = config.get("max_cellsize_gridpoint", None)
+        # Variable names from global config
+        self.refl_name = config.global_.var_names.reflectivity
+        self.labels_name = config.global_.var_names.cell_labels
+        self.z_level = config.global_.z_level
 
         logger.info("RadarCellSegmenter initialized: method=%s, threshold=%s", 
                     self.method, self.threshold)
@@ -253,16 +230,8 @@ class RadarCellSegmenter:
         >>> # Not typically called directly; use segment() instead
         >>> ds_labeled = segmenter._segment2D_threshold(ds_2d)
         """
-        # Get global settings
-        global_cfg = self.config.get("global", {})
-        var_names = global_cfg.get("var_names", {})
-
-        # Get variable names
-        refl_name = var_names.get("reflectivity", "reflectivity")
-        labels_name = var_names.get("cell_labels", "cell_labels")
-
         # Extract reflectivity (already 2D)
-        refl = ds[refl_name].values
+        refl = ds[self.refl_name].values
 
         binary_mask = refl > self.threshold
         labels = self._binary_to_labels(
@@ -273,16 +242,13 @@ class RadarCellSegmenter:
             self.max_gridpoints
         )
 
-        # Get z_level from dataset attrs (set by processor)
-        z_level_m = ds.attrs.get("z_level_m", 2000)
-
         # Build attrs dict, excluding None values (NetCDF can't serialize None)
         attrs = {
             "long_name": "Cell segmentation labels",
             "units": "1",
             "method": self.method,
             "threshold_dbz": self.threshold,
-            "z_level_m": z_level_m,
+            "z_level_m": self.z_level,
             "min_cellsize_gridpoint": self.min_gridpoints,
         }
         if self.max_gridpoints is not None:
@@ -297,8 +263,8 @@ class RadarCellSegmenter:
 
         # we attach labels to original dataset
         ds_out = ds.copy()
-        ds_out[labels_name] = labels_da
-        logger.debug(f"Labels attached: var={labels_name}, shape={labels.shape}, max={labels.max()}")
+        ds_out[self.labels_name] = labels_da
+        logger.debug(f"Labels attached: var={self.labels_name}, shape={labels.shape}, max={labels.max()}")
 
         return ds_out
 

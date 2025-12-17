@@ -9,7 +9,7 @@ import queue
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,9 @@ try:
     CONTEXTILY_AVAILABLE = True
 except ImportError:
     CONTEXTILY_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarPlotter', 'PlotterThread']
 
@@ -75,42 +78,56 @@ class RadarPlotter:
         print(f"Plot saved to {plot_path}")
     """
     
-    def __init__(self, config: Dict = None, show_plots: bool = False):
+    def __init__(self, config: "InternalConfig" = None, show_plots: bool = False):
         """Initialize plotter.
 
         Parameters
         ----------
-        config : dict, optional
-            Pipeline configuration with visualization section containing
-            dpi, figsize, basemap settings, and reflectivity thresholds.
+        config : InternalConfig, optional
+            Fully validated runtime configuration.
         show_plots : bool, optional
             If True, display plots (uses interactive backend). Default False
             (Agg backend for headless/file-only output).
         """
 
-        self.config = config or {}
-        viz_config = self.config.get("visualization", {}) 
+        self.config = config
         
-        # Plot configuration
-        self.dpi = viz_config.get("dpi", 200)
-        self.figsize = tuple(viz_config.get("figsize", (20, 10)))
-        self.output_format = viz_config.get("output_format", "png")
-        
-        # Basemap configuration
-        self.use_basemap = viz_config.get("use_basemap", True)
-        self.basemap_alpha = viz_config.get("basemap_alpha", 0.6)
-        
-        # Style configuration
-        self.seg_linewidth = viz_config.get("seg_linewidth", 1)
-        self.proj_linewidth = viz_config.get("proj_linewidth", 0.8)
-        self.proj_alpha = viz_config.get("proj_alpha", 0.6)
-        self.flow_scale = viz_config.get("flow_scale", 1.0)
-        self.flow_subsample = viz_config.get("flow_subsample", 10)
-        
-        # Reflectivity thresholds
-        self.min_refl = viz_config.get("min_reflectivity", 0)
-        self.vmin = viz_config.get("refl_vmin", 10)
-        self.vmax = viz_config.get("refl_vmax", 50)
+        if config:
+            # Plot configuration
+            self.dpi = config.visualization.dpi
+            self.figsize = config.visualization.figsize
+            self.output_format = config.visualization.output_format
+            
+            # Basemap configuration
+            self.use_basemap = config.visualization.use_basemap
+            self.basemap_alpha = config.visualization.basemap_alpha
+            
+            # Style configuration
+            self.seg_linewidth = config.visualization.seg_linewidth
+            self.proj_linewidth = config.visualization.proj_linewidth
+            self.proj_alpha = config.visualization.proj_alpha
+            self.flow_scale = config.visualization.flow_scale
+            self.flow_subsample = config.visualization.flow_subsample
+            
+            # Reflectivity thresholds
+            self.min_refl = config.visualization.min_reflectivity
+            self.vmin = config.visualization.refl_vmin
+            self.vmax = config.visualization.refl_vmax
+        else:
+            # Defaults for backward compatibility
+            self.dpi = 200
+            self.figsize = (20, 10)
+            self.output_format = "png"
+            self.use_basemap = True
+            self.basemap_alpha = 0.6
+            self.seg_linewidth = 1.0
+            self.proj_linewidth = 0.8
+            self.proj_alpha = 0.6
+            self.flow_scale = 1.0
+            self.flow_subsample = 10
+            self.min_refl = 0
+            self.vmin = 10
+            self.vmax = 50
         
         if self.use_basemap and not CONTEXTILY_AVAILABLE:
             logger.warning("Basemap requested but contextily not installed")
@@ -120,11 +137,25 @@ class RadarPlotter:
     
     def _get_var_name(self, var_key: str, default: str) -> str:
         """Get variable name from config."""
-        return self.config.get("global", {}).get("var_names", {}).get(var_key, default)
+        if self.config:
+            if var_key == "reflectivity":
+                return self.config.global_.var_names.reflectivity
+            elif var_key == "cell_labels":
+                return self.config.global_.var_names.cell_labels
+        return default
     
     def _get_coord_name(self, coord_key: str, default: str) -> str:
         """Get coordinate name from config."""
-        return self.config.get("global", {}).get("coord_names", {}).get(coord_key, default)
+        if self.config:
+            if coord_key == "x":
+                return self.config.global_.coord_names.x
+            elif coord_key == "y":
+                return self.config.global_.coord_names.y
+            elif coord_key == "z":
+                return self.config.global_.coord_names.z
+            elif coord_key == "time":
+                return self.config.global_.coord_names.time
+        return default
     
     def _extract_timestamp(self, ds: xr.Dataset) -> datetime:
         """Extract timestamp from dataset."""
@@ -660,7 +691,8 @@ class PlotterThread(threading.Thread):
         self,
         input_queue: queue.Queue,
         output_dirs: Dict,
-        config: Dict = None,
+        config: "InternalConfig" = None,
+        file_tracker = None,
         show_plots: bool = False,
         name: str = 'RadarPlotter',
     ):
@@ -672,8 +704,10 @@ class PlotterThread(threading.Thread):
             Queue of analysis file paths from processor.
         output_dirs : dict
             Output directory paths for saving plots.
-        config : dict, optional
-            Pipeline configuration with visualization settings.
+        config : InternalConfig, optional
+            Fully validated runtime configuration.
+        file_tracker : FileProcessingTracker, optional
+            Optional file processing tracker to record plot completion.
         show_plots : bool, optional
             Display plots (default False for headless mode).
         name : str
@@ -683,7 +717,8 @@ class PlotterThread(threading.Thread):
         
         self.input_queue = input_queue
         self.output_dirs = output_dirs
-        self.config = config or {}
+        self.config = config
+        self.file_tracker = file_tracker
         self.show_plots = show_plots
         
         self.plotter = RadarPlotter(config=config, show_plots=show_plots)
@@ -748,14 +783,14 @@ class PlotterThread(threading.Thread):
             logger.info(f"✓ {radar_id} plot saved: {plot_file}")
             
             # Update tracker
-            tracker = self.config.get("file_tracker")
+            tracker = self.file_tracker
             if tracker and plot_file:
                 tracker.mark_stage_complete(file_id, "plotted", path=Path(plot_file))
             
         except Exception as e:
             logger.exception(f"Error processing plot item: {e}")
             
-            tracker = self.config.get("file_tracker")
+            tracker = self.file_tracker
             if tracker:
                 file_id = Path(item.get('segmentation_nc', '')).stem.replace('_analysis', '').replace('_segmentation', '')
                 if file_id:

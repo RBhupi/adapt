@@ -1,6 +1,7 @@
 numpy
 xarray
 pandas
+pydantic>=2.0
 arm_pyart
 opencv-python
 scikit-image

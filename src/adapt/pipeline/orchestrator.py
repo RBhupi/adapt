@@ -8,12 +8,15 @@ import queue
 import time
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, TYPE_CHECKING
 
 from adapt.radar.downloader import AwsNexradDownloader
 from adapt.pipeline.processor import RadarProcessor
 from adapt.pipeline.file_tracker import FileProcessingTracker
 from adapt.visualization.plotter import PlotterThread
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['PipelineOrchestrator']
 
@@ -86,46 +89,21 @@ class PipelineOrchestrator:
         orch.start(max_runtime=60)  # Run for 60 minutes then stop
     """
 
-    def __init__(self, config: dict, max_queue_size: int = 100):
+    def __init__(self, config: "InternalConfig", output_dirs: Dict[str, Path], max_queue_size: int = 100):
         """Initialize orchestrator with pipeline configuration.
 
         Parameters
         ----------
-        config : dict
-            Complete pipeline configuration dictionary containing:
+        config : InternalConfig
+            Fully validated runtime configuration.
             
-            - `mode` : str, "realtime" or "historical"
-                Processing mode. Realtime continuously monitors for new files.
-                Historical downloads all files within a time range then stops.
-            
-            - `base_dir` : str
-                Root output directory. Subdirectories created for nexrad/,
-                gridded/, analysis/, plots/, logs/.
-            
-            - `output_dirs` : dict
-                Pre-computed output directory paths. Created by
-                `setup_output_directories()`.
-            
-            - `downloader` : dict
-                Download configuration:
-                
-                - `radar_id` : str, e.g. "KDIX"
-                - `output_dir` : str, directory to save Level-II files
-                - `latest_n` : int, realtime mode only. Keep last N files.
-                - `minutes` : int, realtime mode. Rolling window in minutes.
-                - `sleep_interval` : int, seconds between polls.
-                - `start_time` : str, historical mode. ISO timestamp.
-                - `end_time` : str, historical mode. ISO timestamp.
-            
-            - `regridder`, `segmenter`, `analyzer`, `projector`, `visualization` : dict
-                Configuration for each processing stage (passed to worker threads).
-            
-            - `logging` : dict
-                - `level` : str, "DEBUG", "INFO", "WARNING", "ERROR"
-            
-            - `file_tracker` : FileProcessingTracker, optional
-                If provided, used to track file processing state. Created
-                internally if not provided.
+        output_dirs : dict
+            Output directory paths (from setup_output_directories):
+            - nexrad: NEXRAD Level-II files
+            - gridded: Regridded NetCDF files
+            - analysis: Analysis NetCDF files
+            - plots: Visualization PNG files
+            - logs: Log files
 
         max_queue_size : int, optional
             Maximum size of inter-thread communication queues (default: 100).
@@ -134,8 +112,8 @@ class PipelineOrchestrator:
             - Smaller queues (10-30): Lower memory, stronger backpressure, risk of stalls
             - Balance depends on your file processing speed vs download speed
         """
-        # TODO: We will use pydantic for config validation later.
         self.config = config
+        self.output_dirs = output_dirs
         self.max_queue_size = max_queue_size
 
         # Queues for inter-thread communication
@@ -147,7 +125,8 @@ class PipelineOrchestrator:
         self.processor = None
         self.plotter = None
 
-        # File tracking
+        # File tracking (initialized in _setup_logging)
+        self.tracker = None
         self.tracker = None
 
         # Lifecycle state
@@ -162,15 +141,11 @@ class PipelineOrchestrator:
         directories, and sets up FileProcessingTracker for pipeline state management.
         Log level and paths derived from config.
         """
-        #> loging level can be one of the config_parameters tat will decide if the loging is done
-        #> frequently or only for important events, that is debug or info or only warnings and errors.
-        log_level = self.config.get("logging", {}).get("level", "INFO")
-        log_level = getattr(logging, log_level.upper(), logging.INFO)
+        log_level = getattr(logging, self.config.logging.level.upper(), logging.INFO)
 
-        # Get log path from output_dirs.
-        output_dirs = self.config.get("output_dirs", {})
-        radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-        log_dir = Path(output_dirs.get("logs", "."))
+        # Get log path from output_dirs
+        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        log_dir = Path(self.output_dirs["logs"])
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"pipeline_{radar_id}.log"
 
@@ -200,13 +175,9 @@ class PipelineOrchestrator:
         logger.info("Logging: level=%s, file=%s", log_level, log_path)
 
         # Initialize file tracker
-        if output_dirs:
-            tracker_path = Path(output_dirs.get("analysis", ".")) / f"{radar_id}_file_tracker.db"
-            self.tracker = FileProcessingTracker(tracker_path)
-            self.config["file_tracker"] = self.tracker
-            if "downloader" in self.config:
-                self.config["downloader"]["file_tracker"] = self.tracker
-            logger.info("File tracker: %s", tracker_path)
+        tracker_path = Path(self.output_dirs["analysis"]) / f"{radar_id}_file_tracker.db"
+        self.tracker = FileProcessingTracker(tracker_path)
+        logger.info("File tracker: %s", tracker_path)
 
     def start(self, max_runtime: Optional[int] = None):
         """Start the pipeline and run until completion or user interrupt.
@@ -269,8 +240,10 @@ class PipelineOrchestrator:
         # Start Downloader thread
         logger.info("Starting Downloader...")
         self.downloader = AwsNexradDownloader(
-            config=self.config.get("downloader", {}),
-            result_queue=self.downloader_queue
+            config=self.config,
+            output_dir=self.output_dirs["nexrad"],
+            result_queue=self.downloader_queue,
+            file_tracker=self.tracker,
         )
         self.downloader.start()
         logger.info("✓ Downloader started")
@@ -280,24 +253,26 @@ class PipelineOrchestrator:
         self.processor = RadarProcessor(
             input_queue=self.downloader_queue,
             config=self.config,
+            output_dirs=self.output_dirs,
             output_queue=self.plotter_queue,
+            file_tracker=self.tracker,
         )
         self.processor.start()
         logger.info("✓ Processor started")
 
         # Start Plotter thread
-        output_dirs = self.config.get("output_dirs", {})
         logger.info("Starting Plotter...")
         self.plotter = PlotterThread(
             input_queue=self.plotter_queue,
-            output_dirs=output_dirs,
+            output_dirs=self.output_dirs,
             config=self.config,
+            file_tracker=self.tracker,
             name="RadarPlotter"
         )
         self.plotter.start()
         logger.info("✓ Plotter started")
 
-        mode = self.config.get("mode", "realtime")
+        mode = self.config.mode
         logger.info("Pipeline running in %s mode. Press Ctrl+C to stop.", mode.upper())
 
         try:
@@ -458,7 +433,7 @@ class PipelineOrchestrator:
 
     def _log_status(self):
         """Log current pipeline status."""
-        mode = self.config.get("mode", "realtime")
+        mode = self.config.mode
         hist_status = ""
         if mode == "historical" and self.downloader:
             processed, expected = self.downloader.get_historical_progress()

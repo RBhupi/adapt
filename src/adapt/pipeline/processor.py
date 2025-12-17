@@ -7,7 +7,7 @@ computes statistics, and persists results to NetCDF and SQLite.
 
 import logging
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, TYPE_CHECKING
 import threading
 import queue
 from datetime import datetime
@@ -19,12 +19,14 @@ import xarray as xr
 import sqlite3
 
 
-from adapt.config import PARAM_CONFIG, get_grid_kwargs, get_output_path
 from adapt.radar.loader import RadarDataLoader
 from adapt.radar.cell_segmenter import RadarCellSegmenter
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 from adapt.radar.cell_projector import RadarCellProjector
 from adapt.radar.radar_utils import compute_all_cell_centroids
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarProcessor']
 
@@ -104,10 +106,12 @@ class RadarProcessor(threading.Thread):
         df = processor.get_results()
     """
 
-    def __init__(self, input_queue: queue.Queue, config: Dict = None,
+    def __init__(self, input_queue: queue.Queue, config: "InternalConfig",
+                 output_dirs: Dict[str, Path],
                  output_queue: queue.Queue = None,
+                 file_tracker = None,
                  name: str = "RadarProcessor"):
-        """Initialize processor.
+        """Initialize processor with validated configuration.
 
         Parameters
         ----------
@@ -115,18 +119,16 @@ class RadarProcessor(threading.Thread):
             Queue of filepaths from downloader thread. Processor pops filepaths
             and processes them. None signals shutdown.
 
-        config : dict, optional
-            Complete pipeline configuration. Required keys:
+        config : InternalConfig
+            Fully validated runtime configuration.
             
-            - `global`: Variable/coordinate name mappings and z-level
-            - `regridder`: Grid parameters (shape, limits, weighting function)
-            - `segmenter`: Threshold, morphological settings, size filters
-            - `analyzer`: Which cell properties to compute
-            - `projector`: Motion estimation and projection steps
-            - `output_dirs`: Paths to save gridded, analysis, and logs
-            - `downloader`: Radar ID for file naming
-            
-            If None, uses PARAM_CONFIG (expert defaults).
+        output_dirs : dict
+            Output directory paths (from setup_output_directories):
+            - nexrad: NEXRAD Level-II files
+            - gridded: Regridded NetCDF files
+            - analysis: Analysis NetCDF files
+            - plots: Visualization PNG files
+            - logs: Log files
 
         output_queue : queue.Queue, optional
             Queue to send analysis files to plotter thread. One dict per file:
@@ -136,6 +138,9 @@ class RadarProcessor(threading.Thread):
             - `timestamp`: Datetime of the scan
             
             If None, no plotting occurs (analysis-only mode).
+            
+        file_tracker : FileProcessingTracker, optional
+            Optional file processing tracker to skip already completed files.
 
         name : str, optional
             Thread name for logging (default: "RadarProcessor").
@@ -148,22 +153,17 @@ class RadarProcessor(threading.Thread):
         super().__init__(daemon=True, name=name)
 
         self.input_queue = input_queue
-        self.config = config or PARAM_CONFIG
+        self.config = config
+        self.output_dirs = output_dirs
         self.output_queue = output_queue  # For plotter thread
+        self.file_tracker = file_tracker
         self._stop_event = threading.Event()
-
-        # Build sub-module configs with global section included
-        global_cfg = self.config.get("global", {})
-        
-        segmenter_cfg = {**self.config.get("segmenter", {}), "global": global_cfg}
-        analyzer_cfg = {**self.config.get("analyzer", {}), "global": global_cfg}
-        projector_cfg = {**self.config.get("projector", {}), "global": global_cfg}
 
         # Initialize processing modules
         self.loader = RadarDataLoader(self.config)
-        self.segmenter = RadarCellSegmenter(segmenter_cfg)
-        self.analyzer = RadarCellAnalyzer(analyzer_cfg)
-        self.projector = RadarCellProjector(projector_cfg)
+        self.segmenter = RadarCellSegmenter(self.config)
+        self.analyzer = RadarCellAnalyzer(self.config)
+        self.projector = RadarCellProjector(self.config)
 
         # Keep last 2 datasets so we can compute flow and projections
         self.dataset_history = []  # List of (filepath, ds) tuples
@@ -182,10 +182,8 @@ class RadarProcessor(threading.Thread):
         This ensures all cells from a pipeline run (even across multiple dates)
         go into the same database.
         """
-        output_dirs = self.config.get("output_dirs", {})
-        radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-
-        analysis_dir = Path(output_dirs.get("analysis", "."))
+        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        analysis_dir = Path(self.output_dirs["analysis"])
         analysis_dir.mkdir(parents=True, exist_ok=True)
         db_filename = f"{radar_id}_cells_statistics.db"
         return analysis_dir / db_filename
@@ -267,10 +265,7 @@ class RadarProcessor(threading.Thread):
         }
         
         # Add radar variable statistics (from config whitelist)
-        radar_vars = self.config.get("analyzer", {}).get("radar_variables", [
-            "reflectivity", "velocity", "differential_phase",
-            "differential_reflectivity", "cross_correlation_ratio", "spectrum_width"
-        ])
+        radar_vars = self.config.analyzer.radar_variables
         for var in radar_vars:
             for stat in ["mean", "min", "max"]:
                 col_name = f"radar_{var}_{stat}"
@@ -354,7 +349,7 @@ class RadarProcessor(threading.Thread):
                 return False
             
             file_id = Path(filepath).stem
-            tracker = self.config.get("file_tracker")
+            tracker = self.file_tracker
             if tracker and tracker.should_process(file_id, "analyzed") is False:
                 if tracker.should_process(file_id, "plotted") is False:
                     logger.info("⏭️  Skipping already completed: %s", Path(filepath).name)
@@ -373,8 +368,7 @@ class RadarProcessor(threading.Thread):
 
             # Step 2: Segment
             ds_2d = self.segmenter.segment(ds_2d)
-            var_names = self.config.get("global", {}).get("var_names", {})
-            labels_name = var_names.get("cell_labels", "cell_labels")
+            labels_name = self.config.global_.var_names.cell_labels
             if labels_name not in ds_2d.data_vars:
                 logger.warning("Segmentation failed for: %s", filepath)
                 return False
@@ -391,7 +385,7 @@ class RadarProcessor(threading.Thread):
                     item = {
                         'segmentation_nc': seg_nc_path,
                         'gridnc_file': None,
-                        'radar_id': self.config.get("downloader", {}).get("radar_id", "UNKNOWN"),
+                        'radar_id': self.config.downloader.radar_id or "UNKNOWN",
                         'timestamp': scan_time,
                     }
                     self.output_queue.put_nowait(item)
@@ -407,7 +401,7 @@ class RadarProcessor(threading.Thread):
 
         except Exception as e:
             logger.exception("Error processing %s", filepath)
-            tracker = self.config.get("file_tracker")
+            tracker = self.file_tracker
             if tracker:
                 file_id = Path(filepath).stem
                 tracker.mark_stage_complete(file_id, "analyzed", error=str(e))
@@ -415,9 +409,8 @@ class RadarProcessor(threading.Thread):
 
     def _requeue_for_plotting(self, file_id, filepath):
         logger.info("Already analyzed, re-queuing for plot: %s", Path(filepath).name)
-        output_dirs = self.config.get("output_dirs", {})
-        radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-        if output_dirs and self.output_queue:
+        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        if self.output_queue:
             from adapt.setup_directories import get_analysis_path
             from datetime import datetime, timezone
             try:
@@ -427,7 +420,7 @@ class RadarProcessor(threading.Thread):
             except:
                 scan_time = datetime.now(timezone.utc)
             seg_nc_path = get_analysis_path(
-                output_dirs=output_dirs,
+                output_dirs=self.output_dirs,
                 radar_id=radar_id,
                 analysis_type="segmentation",
                 timestamp=scan_time,
@@ -448,26 +441,23 @@ class RadarProcessor(threading.Thread):
 
     def _load_and_regrid(self, filepath):
         """Load and regrid radar file, return ds, ds_2d, nc_full_path, scan_time."""
-        grid_kwargs = get_grid_kwargs()
-        save_netcdf = self.config.get("regridder", {}).get("save_netcdf", True)
-        output_dirs = self.config.get("output_dirs")
+        save_netcdf = self.config.regridder.save_netcdf
         nc_full_path = None
         scan_time = None
-        if output_dirs:
-            from adapt.setup_directories import get_netcdf_path
-            from datetime import datetime, timezone
-            radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
-            nc_filename = Path(filepath).stem
-            try:
-                parts = nc_filename.split('_')
-                datetime_str = parts[0][-8:] + parts[1]
-                scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-            except:
-                scan_time = datetime.now(timezone.utc)
-            nc_full_path = get_netcdf_path(output_dirs, radar_id, nc_filename, scan_time=scan_time)
-            output_dir = str(nc_full_path.parent)
-        else:
-            output_dir = self.config.get("downloader", {}).get("output_dir")
+        
+        from adapt.setup_directories import get_netcdf_path
+        from datetime import datetime, timezone
+        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        nc_filename = Path(filepath).stem
+        try:
+            parts = nc_filename.split('_')
+            datetime_str = parts[0][-8:] + parts[1]
+            scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
+        except:
+            scan_time = datetime.now(timezone.utc)
+        nc_full_path = get_netcdf_path(self.output_dirs, radar_id, nc_filename, scan_time=scan_time)
+        output_dir = str(nc_full_path.parent)
+        
         ds = None
         if nc_full_path and nc_full_path.exists() and nc_full_path.stat().st_size > 1000:
             try:
@@ -479,7 +469,7 @@ class RadarProcessor(threading.Thread):
                 logger.warning("Failed to load existing NetCDF %s: %s", nc_full_path.name, e)
                 ds = None
         if ds is None:
-            ds = self.loader.load_and_regrid(filepath, grid_kwargs=grid_kwargs,
+            ds = self.loader.load_and_regrid(filepath, grid_kwargs=None,
                                             save_netcdf=save_netcdf, output_dir=output_dir)
         if ds is None:
             return None, None, nc_full_path, scan_time
@@ -559,16 +549,11 @@ class RadarProcessor(threading.Thread):
 
     def _analyze_and_save(self, ds_2d, filepath, nc_full_path, num_cells, scan_time):
         """Analyze cells (now has projection info), update tracker, insert into SQLite DB."""
-        z_level = self.config.get("global", {}).get("z_level", 2000)
+        z_level = self.config.global_.z_level
         df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
-        tracker = self.config.get("file_tracker")
         file_id = Path(filepath).stem
-        if tracker and nc_full_path:
-            tracker.mark_stage_complete(file_id, "regridded", path=nc_full_path)
         if df_cells.empty:
             logger.debug("No cells detected in: %s", Path(filepath).name)
-            if tracker:
-                tracker.mark_stage_complete(file_id, "analyzed", num_cells=0)
             return True
 
         # Ensure time columns are datetime for SQLite TIMESTAMP
@@ -591,6 +576,7 @@ class RadarProcessor(threading.Thread):
             df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
         
         logger.info("✓ Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
+        tracker = self.file_tracker
         if tracker:
             tracker.mark_stage_complete(file_id, "analyzed", num_cells=len(df_cells))
         return True
@@ -769,11 +755,9 @@ class RadarProcessor(threading.Thread):
         xr.Dataset
             2D dataset with all variables sliced at z-level
         """
-        global_cfg = self.config.get("global", {})
-        z_level = global_cfg.get("z_level", 2000)
-        coord_names = global_cfg.get("coord_names", {})
-        time_name = coord_names.get("time", "time")
-        z_name = coord_names.get("z", "z")
+        z_level = self.config.global_.z_level
+        time_name = self.config.global_.coord_names.time
+        z_name = self.config.global_.coord_names.z
         
         # Find z-level index
         z_idx = int(np.argmin(np.abs(ds[z_name].values - z_level)))
@@ -807,18 +791,14 @@ class RadarProcessor(threading.Thread):
         """Save analysis results to NetCDF for visualization.
         """
         try:
-            output_dirs = self.config.get("output_dirs")
-            if not output_dirs:
-                return None
-
             from adapt.setup_directories import get_analysis_path
-            radar_id = self.config.get("downloader", {}).get("radar_id", "UNKNOWN")
+            radar_id = self.config.downloader.radar_id or "UNKNOWN"
 
             # Create output path
             filename_stem = Path(filepath).stem
             seg_nc_filename = f"{filename_stem}_analysis.nc"
             seg_nc_path = get_analysis_path(
-                output_dirs,
+                self.output_dirs,
                 radar_id=radar_id,
                 analysis_type="netcdf",
                 timestamp=scan_time,

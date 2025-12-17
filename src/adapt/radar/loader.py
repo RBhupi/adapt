@@ -15,11 +15,14 @@ Author: Bhupendra Raut
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import logging
 import pyart
 
 import xarray as xr
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarDataLoader']
 
@@ -76,92 +79,34 @@ class RadarDataLoader:
     >>> print(ds.data_vars)  # reflectivity, velocity, etc.
     """
 
-    def __init__(self, config: dict | None = None):
-        """Initialize loader with configuration for reader and regridder.
+    def __init__(self, config: "InternalConfig"):
+        """Initialize loader with validated configuration.
         
         Parameters
         ----------
-        config : dict
-            Required dictionary containing:
-            
-            - `reader` : dict
-                Configuration for file reading.
-                
-                - `file_format` : str, optional
-                    File format type. Currently supports "nexrad_archive" (default).
-                    Used to dispatch to correct Py-ART reader function.
-            
-            - `regridder` : dict
-                Configuration for grid transformation.
-                
-                - `grid_shape` : tuple of int, optional
-                    (nz, ny, nx) - Number of grid points in each dimension.
-                    Default: (41, 201, 201)
-                
-                - `grid_limits` : tuple of tuple, optional
-                    ((z_min, z_max), (y_min, y_max), (x_min, x_max)) in meters
-                    from radar center. Default: ((0, 20000), (-100000, 100000), (-100000, 100000))
-                
-                - `roi_func` : str, optional
-                    Radius of influence function. "dist_beam" (default) uses
-                    distance along radar ray. "dist" uses straight-line distance.
-                
-                - `min_radius` : float, optional
-                    Minimum radius for weighting function (meters). Default: 1750.0
-                
-                - `weighting_function` : str, optional
-                    Interpolation algorithm. "cressman" (default) is fast and smooth.
-                    "barnes" is slower but better quality. "linear" is fastest.
-        
-        Raises
-        ------
-        ValueError
-            If config is None.
-        TypeError
-            If config is not a dict.
-        KeyError
-            If required keys ("reader", "regridder") are missing from config.
+        config : InternalConfig
+            Fully validated runtime configuration.
         
         Notes
         -----
-        Config validation is strict; all required top-level keys must be present.
-        Sub-key defaults are applied during regridding, not initialization.
+        All parameters are read directly from config - no defaults,
+        no .get() calls, no validation. Configuration is already
+        complete and validated by Pydantic.
         
         Examples
         --------
-        >>> config = {
-        ...     "reader": {"file_format": "nexrad_archive"},
-        ...     "regridder": {
-        ...         "grid_shape": (41, 201, 201),
-        ...         "grid_limits": ((0, 20000), (-100000, 100000), (-100000, 100000)),
-        ...         "roi_func": "dist_beam",
-        ...         "min_radius": 1750.0,
-        ...         "weighting_function": "cressman"
-        ...     }
-        ... }
+        >>> from adapt.schemas import resolve_config, ParamConfig
+        >>> config = resolve_config(ParamConfig())
         >>> loader = RadarDataLoader(config)
         """
-        self.config = self._validate_config(config)
-        self.reader_config = self.config["reader"]
-        self.regridder_config = self.config["regridder"]
-
-    @staticmethod
-    def _validate_config(cfg):
-        def ensure_present(c):
-            if c is None:
-                raise ValueError("Config dict required.")
-            if not isinstance(c, dict):
-                raise TypeError("Config must be a dict.")
-            return c
-
-        def ensure_keys(c):
-            needed = {"reader", "regridder"}
-            missing = needed - c.keys()
-            if missing:
-                raise KeyError(f"Missing config keys: {missing}")
-            return c
-
-        return ensure_keys(ensure_present(cfg))
+        self.config = config
+        self.file_format = config.reader.file_format
+        self.grid_shape = config.regridder.grid_shape
+        self.grid_limits = config.regridder.grid_limits
+        self.roi_func = config.regridder.roi_func
+        self.min_radius = config.regridder.min_radius
+        self.weighting_function = config.regridder.weighting_function
+        self.save_netcdf = config.regridder.save_netcdf
 
     def read(self, filepath: Path | str) -> Optional[object]:
         """Read a NEXRAD archive file into a Py-ART Radar object.
@@ -207,12 +152,10 @@ class RadarDataLoader:
                 logger.error("Radar file not found: %s", filepath)
                 return None
             
-            file_format = self.reader_config.get("file_format", "nexrad_archive")
-
-            if file_format == "nexrad_archive":
+            if self.file_format == "nexrad_archive":
                 radar = pyart.io.read_nexrad_archive(filepath)
             else:
-                logger.error("Unsupported file format: %s", file_format)
+                logger.error("Unsupported file format: %s", self.file_format)
                 return None
 
             logger.debug("Successfully read radar file: %s", filepath)
@@ -295,12 +238,11 @@ class RadarDataLoader:
         try:
             # Merge default regridder config with overrides
             final_grid_kwargs = {
-                "grid_shape": self.regridder_config.get("grid_shape", (41, 201, 201)),
-                "grid_limits": self.regridder_config.get("grid_limits",
-                    ((0, 20000), (-100000, 100000), (-100000, 100000))),
-                "roi_func": self.regridder_config.get("roi_func", "dist_beam"),
-                "min_radius": self.regridder_config.get("min_radius", 1750.0),
-                "weighting_function": self.regridder_config.get("weighting_function", "cressman"),
+                "grid_shape": self.grid_shape,
+                "grid_limits": self.grid_limits,
+                "roi_func": self.roi_func,
+                "min_radius": self.min_radius,
+                "weighting_function": self.weighting_function,
             }
 
             # Override with explicit kwargs if provided
