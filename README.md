@@ -10,10 +10,10 @@
 
 1. **Download** NEXRAD files from AWS S3 (automatic streaming architecture)
 2. **Regrid** to Cartesian coordinates using Cressman interpolation (ARM Py-ART)
-3. **Segment** storm cells via reflectivity thresholding and morphology
-4. **Project** cell motion using optical flow (Farneback algorithm)
+3. **Segment** storm cells using reflectivity thresholding and morphology
+4. **Project** cell motion using optical flow
 5. **Analyze** cell properties (area, centroid, reflectivity, motion)
-6. **Persist** results to NetCDF, SQLite, Parquet, and PNG visualizations
+6. **Persist** results to NetCDF, SQLite, and PNG visualizations
 
 ### Architecture
 
@@ -43,11 +43,10 @@ Input: AWS S3 NEXRAD
     └─ Output: PNG plots
 
 Final Exports:
-  ✓ Gridded NetCDF (science-ready)
+  ✓ Gridded NetCDF
   ✓ Analysis NetCDF (segmentation + projections)
-  ✓ SQLite database (queryable cell stats)
-  ✓ Parquet export (analytics-ready)
-  ✓ PNG plots (visual verification)
+  ✓ SQLite database (cell stats)
+  ✓ PNG plots
 ```
 
 ## 🚀 Quick Start
@@ -111,14 +110,14 @@ python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KMOB
 
 - **Python:** 3.8+
 - **OS:** macOS, Linux, Windows (with WSL2 recommended)
-- **RAM:** 8 GB minimum (16 GB recommended for batch processing)
+- **RAM:** 4 GB minimum (>8 GB recommended for batch processing)
 - **Disk:** Fast SSD for NetCDF I/O (temporal data causes HDF5 congestion)
 
 ### Dependencies
 
 **Core Libraries:**
 - `numpy`, `xarray`, `pandas`: Numerical computing
-- `arm_pyart`: ARM Py-ART (NEXRAD loading & regridding)
+- `arm_pyart`: ARM Py-ART (loading & regridding)
 - `opencv-python`: Optical flow (Farneback)
 - `scikit-image`: Morphological operations
 - `pydantic>=2.0`: Configuration validation
@@ -137,13 +136,6 @@ python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KMOB
 
 **HDF5 errors in plots:** This is benign (Py-ART checking file types). Plots still generate correctly.
 
-**AWS credential issues:** Ensure AWS credentials are configured:
-```bash
-aws configure
-# Or set environment variables:
-export AWS_ACCESS_KEY_ID=your_key
-export AWS_SECRET_ACCESS_KEY=your_secret
-```
 
 **Cartopy projection errors:** Try:
 ```bash
@@ -262,13 +254,7 @@ Docs build automatically in GitHub Actions (see `.github/workflows/docs.yml`).
 
 ## 🙏 Acknowledgments
 
-Built with support from the U.S. Department of Energy as part of the Atmospheric Radiation Measurement (ARM) Climate Research Facility, an Office of Science user facility.
-
-**Key Libraries:**
-- ARM Py-ART (NEXRAD processing)
-- Pydantic (configuration validation)
-- XArray (labeled arrays)
-- OpenCV (optical flow)
+Built with support from the U.S. Department of Energy as part of the Atmospheric Radiation Measurement (ARM) Research Facility, an Office of Science user facility.
 
 ## 📝 License
 
@@ -276,5 +262,5 @@ See [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-Bhupendra Raut (@RBhupi)
+Bhupendra Raut (@RBhupi) 
 
