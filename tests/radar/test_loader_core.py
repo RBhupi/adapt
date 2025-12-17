@@ -3,21 +3,20 @@ import pytest
 pytestmark = pytest.mark.unit
 from adapt.radar.loader import RadarDataLoader
 
-def test_loader_requires_config():
-    with pytest.raises(ValueError):
-        RadarDataLoader(None)
 
-def test_loader_requires_reader_and_regridder():
-    with pytest.raises(KeyError):
-        RadarDataLoader({"reader": {}})
+# Note: Legacy tests for None/incomplete dict configs removed.
+# InternalConfig validation now prevents invalid configurations at creation time.
 
 
-def test_read_missing_file_returns_none(basic_config):
-    loader = RadarDataLoader(basic_config)
+def test_read_missing_file_returns_none(radar_config):
+    """Loader returns None for missing files."""
+    loader = RadarDataLoader(radar_config)
     assert loader.read("/does/not/exist") is None
 
-def test_regrid_handles_exception(monkeypatch, basic_config):
-    loader = RadarDataLoader(basic_config)
+
+def test_regrid_handles_exception(monkeypatch, radar_config):
+    """Loader handles regridding exceptions gracefully."""
+    loader = RadarDataLoader(radar_config)
 
     def boom(*a, **k):
         raise RuntimeError("fail")

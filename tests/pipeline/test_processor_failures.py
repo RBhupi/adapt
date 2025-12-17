@@ -3,17 +3,19 @@ from pathlib import Path
 import queue
 import pytest
 
-def test_process_missing_file(basic_config):
+def test_process_missing_file(pipeline_config, pipeline_output_dirs):
+    """Processor handles missing file gracefully."""
     q = queue.Queue()
-    proc = RadarProcessor(q, basic_config)
+    proc = RadarProcessor(q, pipeline_config, pipeline_output_dirs)
 
     ok = proc.process_file("/does/not/exist")
     assert ok is False
 
 
-def test_loader_returns_none(monkeypatch, processor_queues, basic_config):
+def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
+    """Processor handles None return from loader."""
     in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, basic_config, out_q)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
 
     monkeypatch.setattr(
         proc.loader,
@@ -26,9 +28,10 @@ def test_loader_returns_none(monkeypatch, processor_queues, basic_config):
     assert out_q.empty()
 
 
-def test_processor_handles_loader_exception(monkeypatch, processor_queues, basic_config):
+def test_processor_handles_loader_exception(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
+    """Processor handles loader exceptions gracefully."""
     in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, basic_config, out_q)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
 
     def boom(*a, **k):
         raise IOError("disk failure")
@@ -39,12 +42,6 @@ def test_processor_handles_loader_exception(monkeypatch, processor_queues, basic
 
     assert ok is False
     assert out_q.empty()
-
-def test_process_missing_file(basic_config):
-    proc = RadarProcessor(queue.Queue(), basic_config, queue.Queue())
-    ok = proc.process_file("/does/not/exist")
-    assert ok is False
-
 
 # following test (test_processor_enqueues_when_netcdf_is_written) was most painful to write and pass .
 def make_fake_grid_ds(with_labels=True):
@@ -76,10 +73,12 @@ def test_processor_enqueues_when_netcdf_is_written(
     tmp_path,
     monkeypatch,
     processor_queues,
-    basic_config,
+    pipeline_config,
+    pipeline_output_dirs,
 ):
+    """Processor enqueues file after writing NetCDF."""
     in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, basic_config, out_q)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
 
     # ---- fake filesystem ----
     monkeypatch.setattr(

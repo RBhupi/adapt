@@ -5,8 +5,10 @@ pytestmark = pytest.mark.unit
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 
 
-def test_extract_single_cell(labeled_ds_with_extras):
-    analyzer = RadarCellAnalyzer()
+def test_extract_single_cell(labeled_ds_with_extras, make_config):
+    """Analyzer extracts single cell statistics."""
+    config = make_config()
+    analyzer = RadarCellAnalyzer(config)
 
     df = analyzer.extract(labeled_ds_with_extras)
 
@@ -15,8 +17,10 @@ def test_extract_single_cell(labeled_ds_with_extras):
     assert df.iloc[0]["cell_label"] == 1
 
 
-def test_extract_produces_required_columns(labeled_ds_with_extras):
-    analyzer = RadarCellAnalyzer()
+def test_extract_produces_required_columns(labeled_ds_with_extras, make_config):
+    """Analyzer produces required output columns."""
+    config = make_config()
+    analyzer = RadarCellAnalyzer(config)
 
     df = analyzer.extract(labeled_ds_with_extras)
     row = df.iloc[0]

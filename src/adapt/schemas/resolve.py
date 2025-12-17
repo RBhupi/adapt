@@ -136,6 +136,12 @@ def resolve_config(
     # Deep merge: param < user < cli
     merged = deep_merge(param_dict, user_overrides, cli_overrides)
     
+    # Cap max_projection_steps at 10
+    if "projector" in merged and "max_projection_steps" in merged["projector"]:
+        merged["projector"]["max_projection_steps"] = min(
+            merged["projector"]["max_projection_steps"], 10
+        )
+    
     # Validate and freeze as InternalConfig
     internal = InternalConfig.model_validate(merged)
     

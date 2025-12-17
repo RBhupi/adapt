@@ -88,7 +88,7 @@ class InternalProjectorConfig(AdaptBaseModel):
     """Runtime projection configuration."""
     method: str
     max_time_interval_minutes: int
-    max_projection_steps: int
+    max_projection_steps: int = Field(ge=1, le=10)  # Capped at 10
     nan_fill_value: float
     flow_params: InternalFlowParamsConfig
     min_motion_threshold: float

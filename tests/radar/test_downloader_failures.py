@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 pytestmark = pytest.mark.unit
 
 
-def test_download_failure_does_not_queue(tmp_path, fake_scan):
+def test_download_failure_does_not_queue(tmp_path, fake_scan, make_config):
     class FailingConn:
         def get_avail_scans_in_range(self, *a):
             return [fake_scan("bad", datetime.now(timezone.utc))]
@@ -16,8 +16,10 @@ def test_download_failure_does_not_queue(tmp_path, fake_scan):
                 def iter_success(self): return []
             return R()
 
+    config = make_config()
     d = AwsNexradDownloader(
-        {"output_dir": tmp_path},
+        config,
+        output_dir=tmp_path,
         conn=FailingConn()
     )
 
@@ -25,13 +27,15 @@ def test_download_failure_does_not_queue(tmp_path, fake_scan):
     assert downloads == []
 
 
-def test_fetch_scans_exception_returns_empty(tmp_path):
+def test_fetch_scans_exception_returns_empty(tmp_path, make_config):
     class ExplodingConn:
         def get_avail_scans_in_range(self, *a):
             raise RuntimeError("AWS down")
 
+    config = make_config()
     d = AwsNexradDownloader(
-        {"output_dir": tmp_path},
+        config,
+        output_dir=tmp_path,
         conn=ExplodingConn()
     )
 

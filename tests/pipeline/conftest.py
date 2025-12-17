@@ -6,6 +6,9 @@ import shutil
 from datetime import datetime
 
 from adapt.pipeline.file_tracker import FileProcessingTracker
+from adapt.schemas import ParamConfig, InternalConfig
+from adapt.schemas.resolve import resolve_config
+from adapt.setup_directories import setup_output_directories
 
 
 @pytest.fixture
@@ -22,30 +25,19 @@ def tracker(temp_dir):
 
 
 @pytest.fixture
-def basic_config(temp_dir):
-    config = {
-    "mode": "realtime",
-    
-    "reader": {
-        "file_format": "nexrad_archive",
-    },
-    "regridder": {
-        "grid_shape": (41, 301, 301),
-        "grid_limits": ((0, 20000), (-150000, 150000), (-150000, 150000)),
-        "roi_func": "dist_beam",
-        "min_radius": 1750.0,
-        "weighting_function": "cressman",
-        "save_netcdf": True,
-    },
-    "logging": {
-        "level": "INFO",
-    },
-}
-
-    return config
+def pipeline_config() -> InternalConfig:
+    """InternalConfig for pipeline tests."""
+    param = ParamConfig()
+    return resolve_config(param, None, None)
 
 
-# made for processor tests, very
+@pytest.fixture
+def pipeline_output_dirs(temp_dir):
+    """Output directories for pipeline tests."""
+    return setup_output_directories(temp_dir)
+
+
+# made for processor tests
 @pytest.fixture
 def processor_queues():
     return queue.Queue(), queue.Queue()

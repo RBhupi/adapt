@@ -52,7 +52,7 @@ class SegmenterConfig(AdaptBaseModel):
     threshold: float = Field(30.0, description="Reflectivity threshold in dBZ")
     min_cellsize_gridpoint: int = Field(5, ge=1)
     max_cellsize_gridpoint: Optional[int] = Field(None, ge=1)
-    closing_kernel: tuple[int, int] = (2, 2)
+    closing_kernel: tuple[int, int] = (1, 1)  # OLD DEFAULT: was (1,1) not (2,2)
     filter_by_size: bool = True
     
     @field_validator("threshold", mode="before")
@@ -93,10 +93,10 @@ class FlowParamsConfig(AdaptBaseModel):
     """OpenCV optical flow parameters."""
     pyr_scale: float = Field(0.5, gt=0, le=1.0)
     levels: int = Field(3, ge=1)
-    winsize: int = Field(21, ge=1)
-    iterations: int = Field(10, ge=1)
-    poly_n: int = Field(7, ge=5)
-    poly_sigma: float = Field(1.5, gt=0)
+    winsize: int = Field(10, ge=1)  # OLD DEFAULT: was 10 not 21
+    iterations: int = Field(3, ge=1)  # OLD DEFAULT: was 3 not 10
+    poly_n: int = Field(5, ge=5)  # OLD DEFAULT: was 5 not 7
+    poly_sigma: float = Field(1.2, gt=0)  # OLD DEFAULT: was 1.2 not 1.5
     flags: int = 0
 
 
@@ -104,7 +104,7 @@ class ProjectorConfig(AdaptBaseModel):
     """Cell projection configuration."""
     method: str = "adapt_default"
     max_time_interval_minutes: int = Field(30, ge=1)
-    max_projection_steps: int = Field(5, ge=1, le=10)
+    max_projection_steps: int = Field(1, ge=1, le=10)  # OLD DEFAULT: was 1 not 5
     nan_fill_value: float = 0.0
     flow_params: FlowParamsConfig = Field(default_factory=FlowParamsConfig)
     min_motion_threshold: float = Field(0.5, ge=0)
