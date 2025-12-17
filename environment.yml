@@ -1,16 +1,17 @@
-name: adapt
+name: adapt_env
 channels:
   - conda-forge
 dependencies:
-  - python=3.11  # or 3.12, overridden by CI matrix
+  - python=3.11
   - numpy
   - xarray
   - pandas
+  - scipy
   - arm_pyart
   - opencv
   - scikit-image
   - matplotlib
-  - cartopy
+  - cartopy>=0.21
   - netCDF4
   - tqdm
   - h5py
@@ -18,11 +19,16 @@ dependencies:
   - hdf5
   - libnetcdf
   - pip
-  - pytest
+  - pytest>=7.0
   - pytest-cov
+  - sphinx>=4.0
+  - sphinx-rtd-theme>=1.0
   - pip:
       - pydantic>=2.0
       - nexradaws
       - contextily
       - pyproj
+      - pyarrow
+      - sphinx-autodoc-typehints
       - -e .[dev]
+

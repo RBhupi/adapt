@@ -1,15 +1,37 @@
+# Core processing
 numpy
 xarray
 pandas
 pydantic>=2.0
+scipy
+
+# NEXRAD & Radar
 arm_pyart
+nexradaws
+
+# Image processing
 opencv-python
 scikit-image
-matplotlib
-cartopy
+
+# Data I/O
 netCDF4
-tqdm
 h5py
-nexradaws
+pyarrow  # For parquet export
+
+# Visualization
+matplotlib
+cartopy>=0.21
 contextily
 pyproj
+
+# Utilities
+tqdm
+
+# Testing
+pytest>=7.0
+pytest-cov
+
+# Documentation (for GitHub Actions)
+sphinx>=4.0
+sphinx-rtd-theme>=1.0
+sphinx-autodoc-typehints
