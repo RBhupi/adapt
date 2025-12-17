@@ -112,18 +112,6 @@ class PipelineOrchestrator:
             - Smaller queues (10-30): Lower memory, stronger backpressure, risk of stalls
             - Balance depends on your file processing speed vs download speed
         """
-        # Validate required config fields
-        if not config.downloader.radar_id:
-            raise ValueError(
-                "radar_id is required for pipeline execution. "
-                "Set it in user_config.py with 'RADAR_ID: \"KMOB\"' or via --radar CLI argument."
-            )
-        if not config.downloader.output_dir:
-            raise ValueError(
-                "output_dir is required for pipeline execution. "
-                "Set it in user_config.py with 'BASE_DIR: \"/path/to/output\"' or via --base-dir CLI argument."
-            )
-        
         self.config = config
         self.output_dirs = output_dirs
         self.max_queue_size = max_queue_size
@@ -138,7 +126,6 @@ class PipelineOrchestrator:
         self.plotter = None
 
         # File tracking (initialized in _setup_logging)
-        self.tracker = None
         self.tracker = None
 
         # Lifecycle state
@@ -295,7 +282,7 @@ class PipelineOrchestrator:
             self.stop()
 
     def _main_loop(self, mode: str):
-        """Main monitoring loop."""
+        """Monitoring loop: check exit conditions and log status."""
         while True:
             # Historical mode: check for completion
             if mode == "historical":

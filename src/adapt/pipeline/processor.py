@@ -349,9 +349,6 @@ class RadarProcessor(threading.Thread):
             
             # Validate file exists before attempting to process
             file_path = Path(filepath)
-            if not file_path.exists():
-                logger.error("File not found: %s", filepath)
-                return False
             
             file_id = Path(filepath).stem
             tracker = self.file_tracker
@@ -367,16 +364,10 @@ class RadarProcessor(threading.Thread):
 
             # Step 1: Load and regrid
             ds, ds_2d, nc_full_path, scan_time = self._load_and_regrid(filepath)
-            if ds is None or ds_2d is None:
-                logger.warning("Failed to load/regrid: %s", filepath)
-                return False
 
             # Step 2: Segment
             ds_2d = self.segmenter.segment(ds_2d)
             labels_name = self.config.global_.var_names.cell_labels
-            if labels_name not in ds_2d.data_vars:
-                logger.warning("Segmentation failed for: %s", filepath)
-                return False
             num_cells = int(ds_2d[labels_name].max().item())
             logger.info("Segmented: %d cells", num_cells)
 
@@ -476,8 +467,6 @@ class RadarProcessor(threading.Thread):
         if ds is None:
             ds = self.loader.load_and_regrid(filepath, grid_kwargs=None,
                                             save_netcdf=save_netcdf, output_dir=output_dir)
-        if ds is None:
-            return None, None, nc_full_path, scan_time
         ds_2d = self._extract_2d_slice(ds)
         logger.debug(f"Extracted 2D slice at z-level, shape: {ds_2d.dims}")
         return ds, ds_2d, nc_full_path, scan_time
@@ -737,10 +726,10 @@ class RadarProcessor(threading.Thread):
             # Log individual cell details for small number of cells
             if num_cells <= 5:
                 for idx, row in df_cells.iterrows():
-                    cell_label = row.get("cell_label", "?")
-                    area = row.get("cell_area_sqkm", np.nan)
-                    refl_mean = row.get("radar_reflectivity_mean", np.nan)
-                    refl_max = row.get("radar_reflectivity_max", np.nan)
+                    cell_label = row["cell_label"]
+                    area = row["cell_area_sqkm"]
+                    refl_mean = row["radar_reflectivity_mean"]
+                    refl_max = row["radar_reflectivity_max"]
 
                     detail_msg = f"Cell #{cell_label}: area={area:.1f} km², refl_mean={refl_mean:.1f} dBZ, refl_max={refl_max:.1f} dBZ"
                     logger.info("  └─ %s", detail_msg)

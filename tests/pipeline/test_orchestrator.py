@@ -83,25 +83,6 @@ def test_orchestrator_mode_from_config(pipeline_config, pipeline_output_dirs):
     assert orch.config.mode in ["realtime", "historical"]
 
 
-def test_orchestrator_validates_required_fields(make_config, pipeline_output_dirs, temp_dir):
-    """Test orchestrator validates radar_id and output_dir."""
-    # Config without radar_id should raise
-    config = make_config()
-    config.downloader.radar_id = None
-    
-    with pytest.raises(ValueError, match="radar_id is required"):
-        PipelineOrchestrator(config, pipeline_output_dirs)
-
-
-def test_orchestrator_validates_output_dir(make_config, pipeline_output_dirs):
-    """Test orchestrator validates output_dir."""
-    config = make_config()
-    config.downloader.output_dir = None
-    
-    with pytest.raises(ValueError, match="output_dir is required"):
-        PipelineOrchestrator(config, pipeline_output_dirs)
-
-
 def test_orchestrator_stop_clears_queues(pipeline_config, pipeline_output_dirs):
     """Test that stop() sets stop flag and is idempotent."""
     orch = PipelineOrchestrator(pipeline_config, pipeline_output_dirs)
