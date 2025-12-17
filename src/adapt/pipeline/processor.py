@@ -655,7 +655,8 @@ class RadarProcessor(threading.Thread):
             `{output_dirs['analysis']}/{radar_id}_cells_statistics.parquet`
         """
         if filepath is None:
-            filepath = get_output_path()
+            analysis_dir = Path(self.output_dirs["analysis"])
+            filepath = analysis_dir / f"{self.config.downloader.radar_id}_cells_statistics.parquet"
 
         try:
             filepath = Path(filepath)
@@ -668,7 +669,7 @@ class RadarProcessor(threading.Thread):
                 if count > 0:
                     df = pd.read_sql("SELECT * FROM cells", self.db_conn)
                     df.to_parquet(filepath, engine='pyarrow',
-                                  compression=self.config["output"]["compression"],
+                                  compression=self.config.output.compression,
                                   index=False)
                     logger.info("Exported %d rows to: %s", count, filepath)
                 else:
