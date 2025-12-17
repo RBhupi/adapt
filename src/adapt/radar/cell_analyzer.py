@@ -24,8 +24,12 @@ import json
 import numpy as np
 import pandas as pd
 import xarray as xr
+from typing import TYPE_CHECKING
 from scipy.ndimage import center_of_mass
 from skimage.measure import regionprops
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarCellAnalyzer']
 
@@ -110,84 +114,31 @@ class RadarCellAnalyzer:
     >>> print(len(df))  # number of cells in this frame
     """
     
-    def __init__(self, config: dict = None):
-        """Initialize analyzer with configuration and variable whitelists.
-        
-        Parses configuration to determine which radar variables to analyze,
-        which fields to exclude, and where to find metadata (lat/lon grids,
-        cell labels, etc.).
+    def __init__(self, config: "InternalConfig"):
+        """Initialize analyzer with validated configuration.
         
         Parameters
         ----------
-        config : dict, optional
-            Configuration dictionary with structure:
-            
-            - `global` : dict, optional
-                Global configuration with variable naming:
-                - `var_names` : dict
-                    - `reflectivity` : str, variable name for reflectivity (default: "reflectivity")
-                    - `cell_labels` : str, variable name for labels (default: "cell_labels")
-            
-            - `radar_variables` : list, optional
-                Whitelist of radar field names to analyze. Default includes:
-                ["reflectivity", "velocity", "differential_phase",
-                 "differential_reflectivity", "spectrum_width", "cross_correlation_ratio"]
-                Only variables in this list AND present in dataset are analyzed.
-            
-            - `exclude_fields` : list, optional
-                Variables to skip even if in whitelist. Default includes
-                metadata (labels, ROI), clutter fields, projection fields.
-            
-            - `projector` : dict, optional
-                Projection configuration:
-                - `max_projection_steps` : int, default 5
-                    Number of forward projection steps to extract
+        config : InternalConfig
+            Fully validated runtime configuration.
         
         Notes
         -----
-        - All parameters use sensible defaults if missing
-        - Whitelist approach ensures only meaningful variables are analyzed
-        - Exclusion list prevents analyzing metadata/intermediate fields
-        - Initialization is fast; all computation deferred to extract()
+        All parameters are read directly from config - no defaults,
+        no .get() calls, no validation. Configuration is already
+        complete and validated by Pydantic.
         
         Examples
         --------
-        >>> config = {
-        ...     "radar_variables": ["reflectivity", "velocity"],
-        ...     "projector": {"max_projection_steps": 5}
-        ... }
+        >>> from adapt.schemas import resolve_config, ParamConfig
+        >>> config = resolve_config(ParamConfig())
         >>> analyzer = RadarCellAnalyzer(config)
         """
-        self.config = config or {}
-        self._global_config = self.config.get("global", {})
-        self._projector_config = self.config.get("projector", {})
-        
-        # Get variable names from config
-        var_names = self._global_config.get("var_names", {})
-        self.reflectivity_field = var_names.get("reflectivity", "reflectivity")
-        
-        # Whitelist of radar variables to analyze (only these get stats computed)
-        self.radar_variables = self.config.get(
-            "radar_variables",
-            [
-                "reflectivity", "velocity", "differential_phase",
-                "differential_reflectivity", "spectrum_width",
-                "cross_correlation_ratio",
-            ]
-        )
-        
-        # Fields to exclude from statistics (metadata, flow vectors, etc.)
-        self.exclude_fields = self.config.get(
-            "exclude_fields", 
-            [
-                "ROI", "labels", "cell_labels",  # Segmentation metadata
-                "clutter_filter_power_removed",  # Clutter filter
-                "cell_projections",  # Projection metadata
-            ]
-        )
-        
-        # Get max projection steps from config
-        self.max_projection_steps = self._projector_config.get("max_projection_steps", 5)
+        self.config = config
+        self.reflectivity_field = config.global_.var_names.reflectivity
+        self.radar_variables = config.analyzer.radar_variables
+        self.exclude_fields = config.analyzer.exclude_fields
+        self.max_projection_steps = config.projector.max_projection_steps
 
     def extract(self, ds: xr.Dataset, z_level: int = None) -> pd.DataFrame:
         """Extract geometric and statistical properties from all labeled cells.
@@ -262,11 +213,8 @@ class RadarCellAnalyzer:
         >>> print(df[['cell_label', 'cell_area_km2', 'radar_reflectivity_mean']])
         >>> df.to_sql('cells', conn, if_exists='append')  # Database storage
         """
-        # Get settings from config
-        global_cfg = self._global_config
-        var_names = global_cfg.get("var_names", {})
-
-        labels_name = var_names.get("cell_labels", "cell_labels")
+        # Get labels variable name from config
+        labels_name = self.config.global_.var_names.cell_labels
 
         # Check for required labels
         if labels_name not in ds.data_vars:

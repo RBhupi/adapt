@@ -4,15 +4,15 @@ from datetime import datetime, timezone
 
 from adapt.radar.downloader import AwsNexradDownloader
 
-
 import pytest
 
 pytestmark = pytest.mark.unit
 
 
-def test_notify_queue_puts_item(tmp_path):
+def test_notify_queue_puts_item(tmp_path, make_config):
     q = Queue()
-    d = AwsNexradDownloader({}, result_queue=q)
+    config = make_config()
+    d = AwsNexradDownloader(config, output_dir=tmp_path, result_queue=q)
 
     path = tmp_path / "file1"
 
@@ -30,7 +30,7 @@ def test_notify_queue_puts_item(tmp_path):
     assert "file_id" in item
 
 
-def test_notify_queue_calls_tracker(tmp_path, fake_scan):
+def test_notify_queue_calls_tracker(tmp_path, fake_scan, make_config):
     class FakeTracker:
         def __init__(self):
             self.registered = False
@@ -45,7 +45,8 @@ def test_notify_queue_calls_tracker(tmp_path, fake_scan):
     from queue import Queue
 
     q = Queue()
-    d = AwsNexradDownloader({"file_tracker": tracker}, result_queue=q)
+    config = make_config()
+    d = AwsNexradDownloader(config, output_dir=tmp_path, result_queue=q, file_tracker=tracker)
 
     d._notify_queue(
         path=tmp_path / "f", scan_time=fake_scan("x").scan_time, is_new=True

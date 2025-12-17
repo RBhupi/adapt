@@ -6,18 +6,20 @@ from adapt.radar.downloader import AwsNexradDownloader
 pytestmark = pytest.mark.unit
 
 
-def test_historical_mode_completes(tmp_path, fake_scan, fake_aws_conn):
+def test_historical_mode_completes(tmp_path, fake_scan, fake_aws_conn, make_config):
     scans = [
         fake_scan("h1", datetime(2024, 1, 1, tzinfo=timezone.utc)),
         fake_scan("h2", datetime(2024, 1, 1, 1, tzinfo=timezone.utc)),
     ]
 
+    config = make_config(
+        start_time="2024-01-01T00:00:00Z",
+        end_time="2024-01-01T02:00:00Z",
+    )
+
     d = AwsNexradDownloader(
-        config={
-            "start_time": "2024-01-01T00:00:00Z",
-            "end_time": "2024-01-01T02:00:00Z",
-            "output_dir": tmp_path,
-        },
+        config,
+        output_dir=tmp_path,
         conn=fake_aws_conn(scans),
         sleeper=lambda _: None,
     )
@@ -30,7 +32,7 @@ def test_historical_mode_completes(tmp_path, fake_scan, fake_aws_conn):
     assert len(downloads) == 2
 
 # Mock AWS completely.
-def test_fetch_scans_filters_and_sorts(monkeypatch):
+def test_fetch_scans_filters_and_sorts(monkeypatch, tmp_path, make_config):
     class FakeScan:
         def __init__(self, key, scan_time):
             self.key = key
@@ -42,7 +44,8 @@ def test_fetch_scans_filters_and_sorts(monkeypatch):
         FakeScan("file0", datetime(2024,1,1,0, tzinfo=timezone.utc)),
     ]
 
-    d = AwsNexradDownloader({})
+    config = make_config()
+    d = AwsNexradDownloader(config, output_dir=tmp_path)
     monkeypatch.setattr(
         d.conn,
         "get_avail_scans_in_range",

@@ -15,8 +15,10 @@ def test_get_lat_lon_bounds():
     assert np.isnan(lon_val)
 
 
-def test_pixel_area_computation(simple_2d_ds):
-    analyzer = RadarCellAnalyzer()
+def test_pixel_area_computation(simple_2d_ds, make_config):
+    """Analyzer computes pixel area correctly."""
+    config = make_config()
+    analyzer = RadarCellAnalyzer(config)
 
     area = analyzer._pixel_area_km2(simple_2d_ds)
 

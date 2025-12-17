@@ -21,8 +21,12 @@ import logging
 import numpy as np
 import xarray as xr
 import cv2
+from typing import TYPE_CHECKING
 from scipy.spatial import Delaunay
 from scipy.ndimage import binary_dilation
+
+if TYPE_CHECKING:
+    from adapt.schemas import InternalConfig
 
 __all__ = ['RadarCellProjector']
 
@@ -119,46 +123,41 @@ class RadarCellProjector:
     >>> print(f"Generated {num_projections} projections (1 registration + {num_projections-1} future)")
     """
 
-    def __init__(self, config: dict):
-        """Initialize projector with optical flow configuration.
+    def __init__(self, config: "InternalConfig"):
+        """Initialize projector with validated configuration.
         
         Parameters
         ----------
-        config : dict
-            Configuration dictionary (see class docstring for full spec).
-            
-            Required:
-            - `method` : str, optional
-                Projection method (default: "adapt_default")
-            
-            Optional:
-            - `max_projection_steps` : int, default 1
-                Number of forward projection steps (capped at 10)
-            
-            - `max_time_interval_minutes` : int, default 30
-                Skip processing if time gap exceeds this
-            
-            - `nan_fill_value` : float, default 0
-                Value to replace NaNs in reflectivity
-            
-            - `flow_params` : dict
-                OpenCV Farneback optical flow parameters
-            
-            - `global` : dict
-                Variable naming configuration
+        config : InternalConfig
+            Fully validated runtime configuration.
         
         Notes
         -----
-        - Initialization is fast; all computation deferred to project()
-        - Config is stored as-is; validation happens in project()
-        - Flow parameters use OpenCV defaults if not specified
+        All parameters are read directly from config - no defaults,
+        no .get() calls, no validation. Configuration is already
+        complete and validated by Pydantic.
         
         Examples
         --------
-        >>> config = {"method": "adapt_default", "max_projection_steps": 5}
+        >>> from adapt.schemas import resolve_config, ParamConfig
+        >>> config = resolve_config(ParamConfig())
         >>> projector = RadarCellProjector(config)
         """
         self.config = config
+        self.method = config.projector.method
+        self.nan_fill = config.projector.nan_fill_value
+        self.max_interval_minutes = config.projector.max_time_interval_minutes
+        self.max_proj_steps = config.projector.max_projection_steps
+        self.flow_params = {
+            "pyr_scale": config.projector.flow_params.pyr_scale,
+            "levels": config.projector.flow_params.levels,
+            "winsize": config.projector.flow_params.winsize,
+            "iterations": config.projector.flow_params.iterations,
+            "poly_n": config.projector.flow_params.poly_n,
+            "poly_sigma": config.projector.flow_params.poly_sigma,
+            "flags": config.projector.flow_params.flags,
+        }
+        self.refl_var = config.global_.var_names.reflectivity
 
     def project(self, ds_list):
         """Project cells forward using optical flow motion vectors.
@@ -222,10 +221,10 @@ class RadarCellProjector:
         >>> vy = ds_with_motion["heading_y"]
         >>> speed = np.sqrt(vx**2 + vy**2)  # pixels/frame
         """
-        if self.config.get("method") == "adapt_default":
+        if self.method == "adapt_default":
             return self._project_opticalflow(ds_list)
         else:
-            raise ValueError(f"Unknown projection method: {self.config.get('method')}")
+            raise ValueError(f"Unknown projection method: {self.method}")
 
 
     def _project_opticalflow(self, ds_list):
@@ -234,20 +233,7 @@ class RadarCellProjector:
         Receives ds with cell_labels from segmenter. The reflectivity
         slice extraction is handled by processor before calling this.
         """
-        nan_fill = self.config.get("nan_fill_value", 0)
-        max_interval_minutes = self.config.get("max_time_interval_minutes", 30)
-        max_proj_steps = min(self.config.get("max_projection_steps", 1), 10)
-        flow_params = self.config.get("flow_params", {
-            "pyr_scale": 0.5,
-            "levels": 3,
-            "winsize": 10,
-            "iterations": 3,
-            "poly_n": 5,
-            "poly_sigma": 1.2,
-            "flags": 0
-        })
-
-        time_diff = self._validate_datasets(ds_list, max_interval_minutes)
+        time_diff = self._validate_datasets(ds_list, self.max_interval_minutes)
 
         if time_diff is None:
             # Return second ds without projections
@@ -257,14 +243,11 @@ class RadarCellProjector:
 
         # Get reflectivity from ds (already at correct z-level from processor)
         # Reflectivity is always 2D at the configured z-level
-        var_names = self.config.get("global", {}).get("var_names", {})
-        refl_var = var_names.get("reflectivity", "reflectivity")
-        
-        refl1 = np.nan_to_num(ds_list[0][refl_var].values, nan=nan_fill).astype(np.float32)
-        refl2 = np.nan_to_num(ds_list[1][refl_var].values, nan=nan_fill).astype(np.float32)
+        refl1 = np.nan_to_num(ds_list[0][self.refl_var].values, nan=self.nan_fill).astype(np.float32)
+        refl2 = np.nan_to_num(ds_list[1][self.refl_var].values, nan=self.nan_fill).astype(np.float32)
 
         refl1_norm, refl2_norm = self._normalize(refl1, refl2)
-        flow = cv2.calcOpticalFlowFarneback(refl1_norm, refl2_norm, None, **flow_params)
+        flow = cv2.calcOpticalFlowFarneback(refl1_norm, refl2_norm, None, **self.flow_params)
 
         # Get cell_labels from segmenter output
         # For registration (offset=0): project labels from t-1 (ds_list[0]) to t0 (ds_list[1])
@@ -287,8 +270,8 @@ class RadarCellProjector:
         # Each pixel carries its original flow value and uses accumulated displacement.
         # @TODO I have removed more complecated  logic of using flow at new positions for each step, 
         # because some cells did not move in noisy radar data during the test. I will test it again later.
-        future_projections = self._project_frames(labels_curr, flow, n_steps=max_proj_steps)
-        for i in range(max_proj_steps):
+        future_projections = self._project_frames(labels_curr, flow, n_steps=self.max_proj_steps)
+        for i in range(self.max_proj_steps):
             labels_proj_list.append(future_projections[i])
 
         # Add cell_projections to the second (latest) ds

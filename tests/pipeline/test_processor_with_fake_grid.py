@@ -9,14 +9,12 @@ from tests.helpers.fake_grid import make_fake_grid_ds_with_labels
 pytestmark = [pytest.mark.unit, pytest.mark.pipeline]
 
 
-def test_processor_accepts_fake_grid(tmp_path, monkeypatch, basic_config):
-    output_dirs = setup_output_directories(tmp_path)
-    basic_config["output_dirs"] = output_dirs
-
+def test_processor_accepts_fake_grid(tmp_path, monkeypatch, pipeline_config, pipeline_output_dirs):
+    """Processor can process fake grid datasets for testing."""
     in_q = queue.Queue()
     out_q = queue.Queue()
 
-    proc = RadarProcessor(in_q, basic_config, out_q)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
 
     fake_grid = make_fake_grid_ds_with_labels()
 

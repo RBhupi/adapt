@@ -3,6 +3,12 @@ from datetime import datetime, timezone
 import pytest
 import numpy as np
 import xarray as xr
+import tempfile
+import shutil
+from pathlib import Path
+from adapt.schemas import ParamConfig, InternalConfig
+from adapt.schemas.resolve import resolve_config
+from adapt.setup_directories import setup_output_directories
 
 # ---- AwsNexradDownloader fixtures ----
 class FakeScan:
@@ -242,33 +248,23 @@ def labeled_ds_with_extras(simple_2d_ds):
 
 
 @pytest.fixture
-def basic_config(temp_dir):
-    config = {
-    "mode": "realtime",
-    
-    "reader": {
-        "file_format": "nexrad_archive",
-    },
-    "regridder": {
-        "grid_shape": (41, 301, 301),
-        "grid_limits": ((0, 20000), (-150000, 150000), (-150000, 150000)),
-        "roi_func": "dist_beam",
-        "min_radius": 1750.0,
-        "weighting_function": "cressman",
-        "save_netcdf": True,
-    },
-}
-    return config
-
-
-import tempfile
-import shutil
-from pathlib import Path
-@pytest.fixture
 def temp_dir():
     d = tempfile.mkdtemp()
     yield Path(d)
     shutil.rmtree(d)
+
+
+@pytest.fixture
+def radar_config() -> InternalConfig:
+    """InternalConfig for radar module tests."""
+    param = ParamConfig()
+    return resolve_config(param, None, None)
+
+
+@pytest.fixture
+def radar_output_dirs(temp_dir):
+    """Output directories for radar tests."""
+    return setup_output_directories(temp_dir)
 
 
 
