@@ -128,6 +128,12 @@ PARAM_CONFIG: Dict = {
     "logging": {
         "level": "INFO",
     },
+    
+    "processor": {
+        "max_history": 2,
+        "min_file_size": 5000,
+        "db_filename_pattern": "{radar_id}_cells_statistics.db",
+    },
 }
 
 

@@ -115,7 +115,7 @@ class AwsNexradDownloader(threading.Thread):
         super().__init__(daemon=True)
 
         self.config = config
-        self.radar_id = config.downloader.radar_id or "KLOT"
+        self.radar_id = config.downloader.radar_id
         self.output_dir = Path(output_dir)
         self.sleep_interval = config.downloader.sleep_interval
         self.latest_n = config.downloader.latest_n

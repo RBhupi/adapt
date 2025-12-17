@@ -23,7 +23,13 @@ def param_config():
     Use this as the base for all test configs. Override specific values
     using user_config or by creating custom UserConfig instances.
     """
-    return ParamConfig()
+    # For tests, provide a default radar_id since it's required at runtime
+    from adapt.schemas import ParamConfig as PC
+    
+    config = PC()
+    # Override radar_id with a test default
+    config.downloader.radar_id = "TEST_RADAR"
+    return config
 
 
 @pytest.fixture

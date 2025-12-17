@@ -22,9 +22,14 @@ class InternalReaderConfig(AdaptBaseModel):
 
 
 class InternalDownloaderConfig(AdaptBaseModel):
-    """Runtime downloader configuration."""
-    radar_id: Optional[str]
-    output_dir: Optional[str]
+    """Runtime downloader configuration.
+    
+    Note: radar_id and output_dir are validated as non-None in resolve_config().
+    They may be Optional during config merging, but must be provided before
+    pipeline execution.
+    """
+    radar_id: Optional[str]  # Required at runtime (validated in resolve_config)
+    output_dir: Optional[str]  # Required at runtime (validated in resolve_config)
     latest_n: int
     minutes: int
     sleep_interval: int
@@ -128,6 +133,13 @@ class InternalLoggingConfig(AdaptBaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
+class InternalProcessorConfig(AdaptBaseModel):
+    """Runtime processor configuration."""
+    max_history: int = Field(default=2, ge=2, le=10)  # Frame history for optical flow
+    min_file_size: int = Field(default=5000, ge=1000)  # Minimum file size in bytes
+    db_filename_pattern: str = Field(default="{radar_id}_cells_statistics.db")  # Database filename pattern
+
+
 # =============================================================================
 # Main InternalConfig
 # =============================================================================
@@ -168,6 +180,7 @@ class InternalConfig(AdaptBaseModel):
     visualization: InternalVisualizationConfig
     output: InternalOutputConfig
     logging: InternalLoggingConfig
+    processor: InternalProcessorConfig = Field(default_factory=InternalProcessorConfig)
     
     model_config = ConfigDict(
         extra='forbid',

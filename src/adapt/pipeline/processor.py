@@ -165,9 +165,10 @@ class RadarProcessor(threading.Thread):
         self.analyzer = RadarCellAnalyzer(self.config)
         self.projector = RadarCellProjector(self.config)
 
-        # Keep last 2 datasets so we can compute flow and projections
+        # Keep last N datasets so we can compute flow and projections
+        # Uses max_history from config instead of hardcoding
         self.dataset_history = []  # List of (filepath, ds) tuples
-        self.max_history = 2
+        self.max_history = self.config.processor.max_history
 
         # SQLite database connection
         self.db_path = self._get_db_path()
@@ -181,11 +182,15 @@ class RadarProcessor(threading.Thread):
         Database is stored at: analysis/{radar_id}_cells_statistics.db
         This ensures all cells from a pipeline run (even across multiple dates)
         go into the same database.
+        
+        radar_id and output_dir are required fields from InternalConfig.downloader.
         """
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id  # Required field, no fallback
         analysis_dir = Path(self.output_dirs["analysis"])
         analysis_dir.mkdir(parents=True, exist_ok=True)
-        db_filename = f"{radar_id}_cells_statistics.db"
+        
+        # Use filename pattern from config
+        db_filename = self.config.processor.db_filename_pattern.format(radar_id=radar_id)
         return analysis_dir / db_filename
 
     def _init_database(self):
@@ -385,7 +390,7 @@ class RadarProcessor(threading.Thread):
                     item = {
                         'segmentation_nc': seg_nc_path,
                         'gridnc_file': None,
-                        'radar_id': self.config.downloader.radar_id or "UNKNOWN",
+                        'radar_id': self.config.downloader.radar_id,
                         'timestamp': scan_time,
                     }
                     self.output_queue.put_nowait(item)
@@ -409,7 +414,7 @@ class RadarProcessor(threading.Thread):
 
     def _requeue_for_plotting(self, file_id, filepath):
         logger.info("Already analyzed, re-queuing for plot: %s", Path(filepath).name)
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id
         if self.output_queue:
             from adapt.setup_directories import get_analysis_path
             from datetime import datetime, timezone
@@ -447,7 +452,7 @@ class RadarProcessor(threading.Thread):
         
         from adapt.setup_directories import get_netcdf_path
         from datetime import datetime, timezone
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id
         nc_filename = Path(filepath).stem
         try:
             parts = nc_filename.split('_')
@@ -793,7 +798,7 @@ class RadarProcessor(threading.Thread):
         """
         try:
             from adapt.setup_directories import get_analysis_path
-            radar_id = self.config.downloader.radar_id or "UNKNOWN"
+            radar_id = self.config.downloader.radar_id
 
             # Create output path
             filename_stem = Path(filepath).stem

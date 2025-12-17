@@ -25,9 +25,12 @@ def tracker(temp_dir):
 
 
 @pytest.fixture
-def pipeline_config() -> InternalConfig:
+def pipeline_config(temp_dir) -> InternalConfig:
     """InternalConfig for pipeline tests."""
     param = ParamConfig()
+    # For tests, provide defaults since radar_id and output_dir are required at runtime
+    param.downloader.radar_id = "TEST_RADAR"
+    param.downloader.output_dir = str(temp_dir)
     return resolve_config(param, None, None)
 
 

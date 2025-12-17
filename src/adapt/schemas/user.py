@@ -205,20 +205,25 @@ class UserConfig(AdaptBaseModel):
         if self.poll_interval_sec is not None:
             downloader["sleep_interval"] = self.poll_interval_sec
         
+        # Map base_dir to downloader.output_dir for convenience
+        if self.base_dir is not None:
+            # Accept either a Path or string; keep as string for overrides
+            downloader["output_dir"] = str(self.base_dir)
+
         # Merge with explicit downloader config
         if self.downloader is not None:
             downloader.update(self.downloader.model_dump(exclude_none=True))
-        
+
         if downloader:
             overrides["downloader"] = downloader
-        
+
         # Regridder section
         regridder = {}
         if self.grid_shape is not None:
             regridder["grid_shape"] = self.grid_shape
         if self.grid_limits is not None:
             regridder["grid_limits"] = self.grid_limits
-        
+
         # Merge with explicit regridder config
         if self.regridder is not None:
             regridder.update(self.regridder.model_dump(exclude_none=True))
