@@ -86,11 +86,17 @@ class UserDownloaderConfig(AdaptBaseModel):
     """User-facing downloader config."""
     radar_id: Optional[str] = None
     output_dir: Optional[str] = None
-    latest_n: Optional[int] = None
-    minutes: Optional[int] = None
-    sleep_interval: Optional[int] = None
+    latest_files: Optional[int] = None
+    latest_minutes: Optional[int] = None
+    poll_interval_sec: Optional[int] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+
+
+class UserAnalyzerConfig(AdaptBaseModel):
+    """User-facing analyzer config."""
+    radar_variables: Optional[list[str]] = None
+    exclude_fields: Optional[list[str]] = None
 
 
 class UserConfig(AdaptBaseModel):
@@ -108,41 +114,45 @@ class UserConfig(AdaptBaseModel):
             radar_id="KHTX",
             base_dir="/data/adapt",
             z_level=2000,
-            threshold_dbz=35,
+            threshold=35,
         )
         
         internal = resolve_config(param_cfg, user_cfg, cli_cfg)
     """
     
     # Top-level operational settings
-    mode: Optional[Literal["realtime", "historical"]] = None
-    radar_id: Optional[str] = None
-    base_dir: Optional[str] = None
+    mode: Optional[Literal["realtime", "historical"]] = Field(None, alias="MODE")
+    radar_id: Optional[str] = Field(None, alias="RADAR_ID")
+    base_dir: Optional[str] = Field(None, alias="BASE_DIR")
     
     # Realtime settings
-    latest_files: Optional[int] = None
-    latest_minutes: Optional[int] = None
-    poll_interval_sec: Optional[int] = None
+    latest_files: Optional[int] = Field(None, alias="LATEST_FILES")
+    latest_minutes: Optional[int] = Field(None, alias="LATEST_MINUTES")
+    poll_interval_sec: Optional[int] = Field(None, alias="POLL_INTERVAL_SEC")
     
     # Historical settings
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
+    start_time: Optional[str] = Field(None, alias="START_TIME")
+    end_time: Optional[str] = Field(None, alias="END_TIME")
     
     # Grid settings (flat aliases)
-    grid_shape: Optional[tuple[int, int, int]] = None
-    grid_limits: Optional[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]] = None
+    grid_shape: Optional[tuple[int, int, int]] = Field(None, alias="GRID_SHAPE")
+    grid_limits: Optional[tuple[tuple[float, float], tuple[float, float], tuple[float, float]]] = Field(None, alias="GRID_LIMITS")
     
     # Segmentation settings (flat aliases)
-    z_level: Optional[float] = None
-    reflectivity_var: Optional[str] = None
-    segmentation_method: Optional[str] = None
-    threshold_dbz: Optional[float] = None
-    min_cell_size: Optional[int] = None
-    max_cell_size: Optional[int] = None
+    z_level: Optional[float] = Field(None, alias="Z_LEVEL")
+    reflectivity_var: Optional[str] = Field(None, alias="REFLECTIVITY_VAR")
+    segmentation_method: Optional[str] = Field(None, alias="SEGMENTATION_METHOD")
+    threshold: Optional[float] = Field(None, alias="THRESHOLD_DBZ")
+    min_cellsize_gridpoint: Optional[int] = Field(None, alias="MIN_CELLSIZE_GRIDPOINT")
+    max_cellsize_gridpoint: Optional[int] = Field(None, alias="MAX_CELLSIZE_GRIDPOINT")
     
     # Projection settings (flat aliases)
-    projection_method: Optional[str] = None
-    projection_steps: Optional[int] = None
+    projection_method: Optional[str] = Field(None, alias="PROJECTION_METHOD")
+    max_projection_steps: Optional[int] = Field(None, alias="MAX_PROJECTION_STEPS")
+    
+    # Analyzer settings (flat aliases)
+    radar_variables: Optional[list[str]] = None
+    exclude_fields: Optional[list[str]] = None
     
     # Nested overrides (advanced users)
     downloader: Optional[UserDownloaderConfig] = None
@@ -150,85 +160,30 @@ class UserConfig(AdaptBaseModel):
     segmenter: Optional[UserSegmenterConfig] = None
     global_: Optional[UserGlobalConfig] = Field(None, alias="global")
     projector: Optional[UserProjectorConfig] = None
+    analyzer: Optional[UserAnalyzerConfig] = None
     
     model_config = AdaptBaseModel.model_config.copy()
     # Allow forgiving input dictionaries (ignore unknown legacy keys)
     model_config.update({"populate_by_name": True, "extra": "ignore"})
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_input_keys(cls, values):
-        """Normalize legacy and uppercase keys before Pydantic validation.
-
-        This method maps common legacy UPPERCASE names and synonyms to the
-        canonical snake_case field names used by `UserConfig`. It leaves
-        nested dicts (e.g., `downloader`, `segmenter`) untouched so their
-        own model validators handle normalization.
-        Unknown keys are ignored (see model_config.extra='ignore').
+    @model_validator(mode="after")
+    def infer_historical_mode_from_times(self):
+        """If times provided but mode not specified, set mode to historical.
+        
+        This is a schema responsibility: if user config indicates a time range,
+        the mode should automatically be historical.
         """
-        if not isinstance(values, dict):
-            return values
+        if self.mode is None:
+            # Check top-level times
+            if self.start_time or self.end_time:
+                self.mode = "historical"
+            # Check nested downloader times
+            elif self.downloader and (self.downloader.start_time or self.downloader.end_time):
+                self.mode = "historical"
+        
+        return self
 
-        key_map = {
-            # Operational keys
-            "MODE": "mode",
-            "RADAR": "radar_id",
-            "RADAR_ID": "radar_id",
-            "BASE_DIR": "base_dir",
-
-            # Realtime / polling
-            "LATEST_FILES": "latest_files",
-            "LATEST_N": "latest_files",
-            "LATEST_MINUTES": "latest_minutes",
-            "POLL_INTERVAL_SEC": "poll_interval_sec",
-            "SLEEP_INTERVAL": "poll_interval_sec",
-
-            # Historical
-            "START_TIME": "start_time",
-            "END_TIME": "end_time",
-
-            # Grid
-            "GRID_SHAPE": "grid_shape",
-            "GRID_LIMITS": "grid_limits",
-
-            # Segmenter
-            "Z_LEVEL": "z_level",
-            "REFLECTIVITY_VAR": "reflectivity_var",
-            "SEGMENTATION_METHOD": "segmentation_method",
-            "SEGMENTER_METHOD": "segmentation_method",
-            "THRESHOLD_DBZ": "threshold_dbz",
-            "MIN_CELL_SIZE": "min_cell_size",
-            "MAX_CELL_SIZE": "max_cell_size",
-
-            # Projection
-            "PROJECTION_METHOD": "projection_method",
-            "PROJECTION_STEPS": "projection_steps",
-        }
-
-        normalized: dict = {}
-        for k, v in values.items():
-            if not isinstance(k, str):
-                # Preserve non-string keys as-is
-                normalized[k] = v
-                continue
-
-            # Direct mapping for common legacy uppercase keys
-            if k in key_map:
-                normalized[key_map[k]] = v
-                continue
-
-            # Case-insensitive match: try uppercase form
-            up = k.upper()
-            if up in key_map:
-                normalized[key_map[up]] = v
-                continue
-
-            # Accept already-canonical names (snake_case or mixed)
-            normalized[k] = v
-
-        return normalized
-    
-    @field_validator("z_level", "threshold_dbz", mode="before")
+    @field_validator("z_level", "threshold", mode="before")
     @classmethod
     def coerce_numeric_fields(cls, v):
         """Accept int or float for numeric fields."""
@@ -245,13 +200,7 @@ class UserConfig(AdaptBaseModel):
         return v
     
     def to_internal_overrides(self) -> dict:
-        """Convert user config to internal config structure.
-        
-        Maps user-friendly flat keys to nested internal structure:
-        - radar_id → downloader.radar_id
-        - z_level → global.z_level
-        - threshold_dbz → segmenter.threshold
-        - etc.
+        """Convert flat UserConfig to nested InternalConfig structure.
         
         Returns
         -------
@@ -260,9 +209,11 @@ class UserConfig(AdaptBaseModel):
         """
         overrides = {}
         
-        # Top-level
         if self.mode is not None:
             overrides["mode"] = self.mode
+        
+        if self.base_dir is not None:
+            overrides["base_dir"] = str(self.base_dir)
         
         # Downloader section
         downloader = {}
@@ -273,11 +224,11 @@ class UserConfig(AdaptBaseModel):
         if self.end_time is not None:
             downloader["end_time"] = self.end_time
         if self.latest_files is not None:
-            downloader["latest_n"] = self.latest_files
+            downloader["latest_files"] = self.latest_files
         if self.latest_minutes is not None:
-            downloader["minutes"] = self.latest_minutes
+            downloader["latest_minutes"] = self.latest_minutes
         if self.poll_interval_sec is not None:
-            downloader["sleep_interval"] = self.poll_interval_sec
+            downloader["poll_interval_sec"] = self.poll_interval_sec
         
         # Map base_dir to downloader.output_dir for convenience
         if self.base_dir is not None:
@@ -309,12 +260,12 @@ class UserConfig(AdaptBaseModel):
         segmenter = {}
         if self.segmentation_method is not None:
             segmenter["method"] = self.segmentation_method
-        if self.threshold_dbz is not None:
-            segmenter["threshold"] = self.threshold_dbz
-        if self.min_cell_size is not None:
-            segmenter["min_cellsize_gridpoint"] = self.min_cell_size
-        if self.max_cell_size is not None:
-            segmenter["max_cellsize_gridpoint"] = self.max_cell_size
+        if self.threshold is not None:
+            segmenter["threshold"] = self.threshold
+        if self.min_cellsize_gridpoint is not None:
+            segmenter["min_cellsize_gridpoint"] = self.min_cellsize_gridpoint
+        if self.max_cellsize_gridpoint is not None:
+            segmenter["max_cellsize_gridpoint"] = self.max_cellsize_gridpoint
         
         # Merge with explicit segmenter config
         if self.segmenter is not None:
@@ -344,8 +295,8 @@ class UserConfig(AdaptBaseModel):
         projector = {}
         if self.projection_method is not None:
             projector["method"] = self.projection_method
-        if self.projection_steps is not None:
-            projector["max_projection_steps"] = self.projection_steps
+        if self.max_projection_steps is not None:
+            projector["max_projection_steps"] = self.max_projection_steps
         
         # Merge with explicit projector config
         if self.projector is not None:
@@ -353,5 +304,19 @@ class UserConfig(AdaptBaseModel):
         
         if projector:
             overrides["projector"] = projector
+        
+        # Analyzer section
+        analyzer = {}
+        if self.radar_variables is not None:
+            analyzer["radar_variables"] = self.radar_variables
+        if self.exclude_fields is not None:
+            analyzer["exclude_fields"] = self.exclude_fields
+        
+        # Merge with explicit analyzer config
+        if self.analyzer is not None:
+            analyzer.update(self.analyzer.model_dump(exclude_none=True))
+        
+        if analyzer:
+            overrides["analyzer"] = analyzer
         
         return overrides

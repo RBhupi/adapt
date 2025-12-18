@@ -25,9 +25,9 @@ class DownloaderConfig(AdaptBaseModel):
     """NEXRAD data downloader configuration."""
     radar_id: Optional[str] = None
     output_dir: Optional[str] = None
-    latest_n: int = Field(5, ge=1, description="Number of latest files to keep")
-    minutes: int = Field(60, ge=1, description="Time window in minutes")
-    sleep_interval: int = Field(300, ge=1, description="Polling interval in seconds")
+    latest_files: int = Field(5, ge=1, description="Number of latest files to keep")
+    latest_minutes: int = Field(60, ge=1, description="Time window in minutes")
+    poll_interval_sec: int = Field(300, ge=1, description="Polling interval in seconds")
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     min_file_size: int = Field(1024, ge=1, description="Minimum file size in bytes to consider valid")
@@ -53,7 +53,7 @@ class SegmenterConfig(AdaptBaseModel):
     threshold: float = Field(30.0, description="Reflectivity threshold in dBZ")
     min_cellsize_gridpoint: int = Field(5, ge=1)
     max_cellsize_gridpoint: Optional[int] = Field(None, ge=1)
-    closing_kernel: tuple[int, int] = (1, 1)  # OLD DEFAULT: was (1,1) not (2,2)
+    closing_kernel: tuple[int, int] = (1, 1)
     filter_by_size: bool = True
     
     @field_validator("threshold", mode="before")
@@ -94,10 +94,10 @@ class FlowParamsConfig(AdaptBaseModel):
     """OpenCV optical flow parameters."""
     pyr_scale: float = Field(0.5, gt=0, le=1.0)
     levels: int = Field(3, ge=1)
-    winsize: int = Field(10, ge=1)  # OLD DEFAULT: was 10 not 21
-    iterations: int = Field(3, ge=1)  # OLD DEFAULT: was 3 not 10
-    poly_n: int = Field(5, ge=5)  # OLD DEFAULT: was 5 not 7
-    poly_sigma: float = Field(1.2, gt=0)  # OLD DEFAULT: was 1.2 not 1.5
+    winsize: int = Field(10, ge=1)
+    iterations: int = Field(3, ge=1)
+    poly_n: int = Field(7, ge=5)
+    poly_sigma: float = Field(1.5, gt=0)
     flags: int = 0
 
 

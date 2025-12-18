@@ -8,12 +8,12 @@ pytestmark = pytest.mark.unit
 def test_init_custom_config(make_config, radar_output_dirs):
     """Downloader initializes with custom config."""
     from adapt.schemas.user import UserDownloaderConfig
-    config = make_config(downloader=UserDownloaderConfig(radar_id="KDIX", latest_n=5, minutes=60))
+    config = make_config(downloader=UserDownloaderConfig(radar_id="KDIX", latest_files=5, latest_minutes=60))
     d = AwsNexradDownloader(config, radar_output_dirs["nexrad"])
 
     assert d.config.downloader.radar_id == "KDIX"
-    assert d.config.downloader.latest_n == 5
-    assert d.config.downloader.minutes == 60
+    assert d.config.downloader.latest_files == 5
+    assert d.config.downloader.latest_minutes == 60
 
 
 def test_stop_sets_event(radar_config, radar_output_dirs):
@@ -24,8 +24,8 @@ def test_stop_sets_event(radar_config, radar_output_dirs):
     assert d.stopped()
 
 
-def test_is_historical_mode(make_config, radar_output_dirs):
-    """Downloader detects historical mode from config."""
+def test_historical_mode_from_config(make_config, radar_output_dirs):
+    """Downloader detects historical mode from config.downloader.mode."""
     from adapt.schemas.user import UserDownloaderConfig
     config = make_config(
         downloader=UserDownloaderConfig(
@@ -34,10 +34,11 @@ def test_is_historical_mode(make_config, radar_output_dirs):
         )
     )
     d = AwsNexradDownloader(config, radar_output_dirs["nexrad"])
-    assert d.is_historical_mode() is True
+    # Mode is decided by schema, not by is_historical_mode() method
+    assert d.config.downloader.mode == "historical"
 
     d2 = AwsNexradDownloader(make_config(), radar_output_dirs["nexrad"])
-    assert d2.is_historical_mode() is False
+    assert d2.config.downloader.mode == "realtime"
 
 
 def test_parse_time_range(make_config, radar_output_dirs):

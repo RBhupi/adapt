@@ -213,7 +213,7 @@ class RadarCellSegmenter:
             - long_name: "Cell segmentation labels"
             - units: "1"
             - method: segmentation method (e.g., "threshold")
-            - threshold_dbz: threshold value used
+            - threshold: threshold value used
             - z_level_m: altitude of this slice (from ds.attrs)
             - min_cellsize_gridpoint: minimum size filter
             - max_cellsize_gridpoint: maximum size filter (if set)
@@ -247,7 +247,7 @@ class RadarCellSegmenter:
             "long_name": "Cell segmentation labels",
             "units": "1",
             "method": self.method,
-            "threshold_dbz": self.threshold,
+            "threshold": self.threshold,
             "z_level_m": self.z_level,
             "min_cellsize_gridpoint": self.min_gridpoints,
         }

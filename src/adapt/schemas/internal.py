@@ -22,17 +22,13 @@ class InternalReaderConfig(AdaptBaseModel):
 
 
 class InternalDownloaderConfig(AdaptBaseModel):
-    """Runtime downloader configuration.
-    
-    Note: radar_id and output_dir are validated as non-None in resolve_config().
-    They may be Optional during config merging, but must be provided before
-    pipeline execution.
-    """
-    radar_id: Optional[str]  # Required at runtime (validated in resolve_config)
-    output_dir: Optional[str]  # Required at runtime (validated in resolve_config)
-    latest_n: int
-    minutes: int
-    sleep_interval: int
+    """Runtime downloader configuration."""
+    mode: Literal["realtime", "historical"]
+    radar_id: str
+    output_dir: str
+    latest_files: int
+    latest_minutes: int
+    poll_interval_sec: int
     start_time: Optional[str]
     end_time: Optional[str]
     min_file_size: int
@@ -171,6 +167,7 @@ class InternalConfig(AdaptBaseModel):
     """
     
     mode: Literal["realtime", "historical"]
+    base_dir: str
     reader: InternalReaderConfig
     downloader: InternalDownloaderConfig
     regridder: InternalRegridderConfig

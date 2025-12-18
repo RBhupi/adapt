@@ -133,7 +133,7 @@ class RadarPlotter:
             logger.warning("Basemap requested but contextily not installed")
             self.use_basemap = False
         
-        logger.info(f"✓ RadarPlotter initialized (format={self.output_format}, dpi={self.dpi})")
+        logger.info(f"RadarPlotter initialized (format={self.output_format}, dpi={self.dpi})")
     
     def _get_var_name(self, var_key: str, default: str) -> str:
         """Get variable name from config."""
@@ -310,7 +310,7 @@ class RadarPlotter:
             zorder=45
         )
         
-        logger.info(f"✓ Plotted optical flow field ({len(y_indices)}x{len(x_indices)} vectors, scale={self.flow_scale})")
+        logger.info(f"Plotted optical flow field ({len(y_indices)}x{len(x_indices)} vectors, scale={self.flow_scale})")
         return True
     
     def _plot_segmentation_contours(
@@ -452,7 +452,7 @@ class RadarPlotter:
         )
         
         plt.close(fig)
-        logger.info(f"✓ Plot saved: {output_file}")
+        logger.info(f"Plot saved: {output_file}")
         
         return str(output_file)
     
@@ -724,7 +724,7 @@ class PlotterThread(threading.Thread):
         self.plotter = RadarPlotter(config=config, show_plots=show_plots)
         self.running = True
         
-        logger.info(f"✓ {name} initialized")
+        logger.info(f"{name} initialized")
     
     def run(self):
         """Process files from queue until shutdown signal received.
@@ -780,7 +780,7 @@ class PlotterThread(threading.Thread):
                 output_path=output_path,
             )
             
-            logger.info(f"✓ {radar_id} plot saved: {plot_file}")
+            logger.info(f"{radar_id} plot saved: {plot_file}")
             
             # Update tracker
             tracker = self.file_tracker
@@ -803,4 +803,4 @@ class PlotterThread(threading.Thread):
 
 
 if __name__ == "__main__":
-    print("✓ RadarPlotter loaded.")
+    print("RadarPlotter loaded.")

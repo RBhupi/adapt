@@ -15,7 +15,7 @@ def test_uppercase_keys_are_handled():
 
     assert user.mode == "historical"
     assert user.radar_id == "KHTX"
-    assert isinstance(user.threshold_dbz, float) and user.threshold_dbz == 40.0
+    assert isinstance(user.threshold, float) and user.threshold == 40.0
     assert user.base_dir == "/tmp/adapt_out"
 
 

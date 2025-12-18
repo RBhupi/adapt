@@ -79,9 +79,9 @@ pip install -e .
 ### 3. Configure
 
 Edit `scripts/user_config.py` to set:
-- `BASE_DIR`: Output directory for results
-- `RADAR_ID`: Target NEXRAD radar (e.g., "KMOB", "KHTX")
-- `MODE`: "realtime" or "historical"
+- `base_dir`: Output directory for results
+- `radar_id`: Target NEXRAD radar (e.g., "KMOB", "KHTX")
+- `mode`: "realtime" or "historical"
 - Thresholds and processing parameters
 
 ### 4. Run Pipeline
@@ -95,13 +95,13 @@ python scripts/run_nexrad_pipeline.py scripts/user_config.py
 ```bash
 python scripts/run_nexrad_pipeline.py scripts/user_config.py \
   --mode historical \
-  --start 2024-06-15T00:00:00Z \
-  --end 2024-06-15T02:00:00Z
+  --start-time 2024-06-15T00:00:00Z \
+  --end-time 2024-06-15T02:00:00Z
 ```
 
 **Override radar ID:**
 ```bash
-python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KMOB
+python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KMOB
 ```
 
 ## 📦 Installation Details
@@ -193,7 +193,7 @@ The SQLite database contains one row per detected cell:
 |--------|------|-------------|
 | time | TIMESTAMP | Scan time |
 | cell_label | INT | Cell ID |
-| cell_area_sqkm | FLOAT | Cell area in km² |
+| cell_area_sqkm | FLOAT | Cell area in km2 |
 | max_dbz | FLOAT | Maximum reflectivity |
 | mean_dbz | FLOAT | Mean reflectivity |
 | heading_x, heading_y | FLOAT | Motion vectors |
@@ -216,9 +216,9 @@ InternalConfig (validated, immutable runtime config)
 
 **Field Aliases** allow friendly config names:
 ```python
-threshold_dbz=35    # Maps to: segmenter.threshold=35.0
+threshold=35    # Maps to: segmenter.threshold=35.0
 radar_id="KMOB"     # Maps to: downloader.radar_id="KMOB"
-min_cell_size=10    # Maps to: segmenter.min_cellsize_gridpoint=10
+min_cellsize_gridpoint=10    # Maps to: segmenter.min_cellsize_gridpoint=10
 ```
 
 ## 📚 Documentation

@@ -5,7 +5,7 @@ the pipeline behavior. Advanced settings are in src/expert_config.py
 
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KHTX
+    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KHTX
     python scripts/run_nexrad_pipeline.py scripts/user_config.py --mode historical
 
 Author: Bhupendra Raut
@@ -15,28 +15,28 @@ CONFIG = {
     # ========================================================================
     # PIPELINE MODE & TARGET
     # ========================================================================
-    "MODE": "realtime",       # "realtime" or "historical"
-    "RADAR_ID": "KJGX",       # NWS NEXRAD radar ID (e.g., KDIX, KHTX, KLOT)
-    "BASE_DIR": "/Users/bhupendra/projects/arm_radar_scaning/tmp",  # All outputs go here
+    "mode": "realtime",       # "realtime" or "historical"
+    "radar_id": "KJGX",       # NWS NEXRAD radar ID (e.g., KDIX, KHTX, KLOT)
+    "base_dir": "/Users/bhupendra/projects/arm_radar_scaning/tmp",  # All outputs go here
 
     # ========================================================================
     # REALTIME MODE SETTINGS
     # ========================================================================
-    "LATEST_FILES": 5,        # Number of latest files to keep
-    "LATEST_MINUTES": 60,     # Time window in minutes
-    "POLL_INTERVAL_SEC": 30,  # Seconds between AWS polls
+    "latest_files": 5,        # Number of latest files to keep
+    "latest_minutes": 60,     # Time window in minutes
+    "poll_interval_sec": 30,  # Seconds between AWS polls
 
     # ========================================================================
     # HISTORICAL MODE SETTINGS
     # ========================================================================
-    "START_TIME": None,       # ISO format: "2025-03-05T15:00:00Z"
-    "END_TIME": None,         # ISO format: "2025-03-05T18:00:00Z"
+    "start_time": None,       # ISO format: "2025-03-05T15:00:00Z"
+    "end_time": None,         # ISO format: "2025-03-05T18:00:00Z"
 
     # ========================================================================
     # GRID SETTINGS
     # ========================================================================
-    "GRID_SHAPE": (41, 301, 301),  # (z, y, x) grid points
-    "GRID_LIMITS": (
+    "grid_shape": (41, 301, 301),  # (z, y, x) grid points
+    "grid_limits": (
         (0, 20000),           # z: 0-20km altitude
         (-150000, 150000),    # y: ±150km
         (-150000, 150000),    # x: ±150km
@@ -45,17 +45,17 @@ CONFIG = {
     # ========================================================================
     # SEGMENTATION SETTINGS
     # ========================================================================
-    "Z_LEVEL": 2000,          # Analysis altitude in meters
-    "REFLECTIVITY_VAR": "reflectivity",
-    "SEGMENTATION_METHOD": "threshold",
-    "THRESHOLD_DBZ": 30,      # Cell detection threshold
-    "MIN_CELL_SIZE": 5,       # Minimum cell size (grid points)
-    "MAX_CELL_SIZE": None,    # Maximum cell size (None = no limit)    
+    "z_level": 2000,          # Analysis altitude in meters
+    "reflectivity_var": "reflectivity",
+    "segmentation_method": "threshold",
+    "threshold": 30,          # Cell detection threshold
+    "min_cellsize_gridpoint": 5,       # Minimum cell size (grid points)
+    "max_cellsize_gridpoint": None,    # Maximum cell size (None = no limit)    
     # ========================================================================
     # PROJECTION SETTINGS
     # ========================================================================
-    "PROJECTION_METHOD": "adapt_default",
-    "PROJECTION_STEPS": 5,
+    "projection_method": "adapt_default",
+    "max_projection_steps": 5,
     # Note: Advanced optical flow parameters (pyramid levels, window size, etc.)
     # are configured in src/expert_config.py
 }

@@ -10,7 +10,7 @@ def test_close_cells_without_closing(close_cells_ds, make_config):
     """Without morphological closing, nearby cells remain separate."""
     from adapt.schemas.user import UserSegmenterConfig
     config = make_config(
-        threshold_dbz=30, 
+        threshold=30, 
         segmenter=UserSegmenterConfig(filter_by_size=False)
     )
     seg = RadarCellSegmenter(config)
@@ -26,7 +26,7 @@ def test_close_cells_with_closing(close_cells_ds, make_config):
     # Note: closing_kernel not yet exposed in UserConfig, need to use internal access
     from adapt.schemas.user import UserSegmenterConfig
     config = make_config(
-        threshold_dbz=30, 
+        threshold=30, 
         segmenter=UserSegmenterConfig(filter_by_size=False, closing_kernel=(2, 2))
     )
     seg = RadarCellSegmenter(config)

@@ -9,7 +9,7 @@ pytestmark = pytest.mark.unit
 
 def test_min_cellsize_filter(two_cell_ds, make_config):
     """Small cells below min_cellsize threshold are filtered out."""
-    config = make_config(threshold_dbz=20, min_cell_size=4)
+    config = make_config(threshold=20, min_cellsize_gridpoint=4)
     seg = RadarCellSegmenter(config)
 
     out = seg.segment(two_cell_ds)
@@ -21,10 +21,10 @@ def test_min_cellsize_filter(two_cell_ds, make_config):
 
 def test_disable_size_filter(two_cell_ds, make_config):
     """All detected cells are retained when filter_by_size=False."""
-    # threshold_dbz=20 will detect both cells (50 and 30 dBZ)
+    # threshold=20 will detect both cells (50 and 30 dBZ)
     from adapt.schemas.user import UserSegmenterConfig
     config = make_config(
-        threshold_dbz=20.0, 
+        threshold=20.0, 
         segmenter=UserSegmenterConfig(filter_by_size=False)
     )
     seg = RadarCellSegmenter(config)
@@ -40,7 +40,7 @@ def test_relabeling_is_contiguous(two_cell_ds, make_config):
     """Cell labels are contiguous integers starting from 1."""
     from adapt.schemas.user import UserSegmenterConfig
     config = make_config(
-        threshold_dbz=20.0, 
+        threshold=20.0, 
         segmenter=UserSegmenterConfig(filter_by_size=False)
     )
     seg = RadarCellSegmenter(config)

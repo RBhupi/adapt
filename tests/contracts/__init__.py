@@ -1,0 +1,1 @@
+"""Conftest for contracts tests."""

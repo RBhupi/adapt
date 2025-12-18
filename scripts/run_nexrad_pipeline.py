@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KHTX
+    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KHTX
     python scripts/run_nexrad_pipeline.py scripts/user_config.py --mode historical
 
 Note: User config in scripts/user_config.py, expert config in src/param_config.py
@@ -51,11 +51,11 @@ def load_user_config_dict(config_path: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Run the ADAPT radar processing pipeline")
     parser.add_argument("config", help="Path to user config file")
-    parser.add_argument("--radar", help="Override radar ID")
+    parser.add_argument("--radar-id", help="Override radar ID")
     parser.add_argument("--mode", choices=["realtime", "historical"], help="Override mode")
-    parser.add_argument("--start", help="Start time (ISO format)")
-    parser.add_argument("--end", help="End time (ISO format)")
-    parser.add_argument("--outdir", help="Output directory")
+    parser.add_argument("--start-time", help="Start time (ISO format)")
+    parser.add_argument("--end-time", help="End time (ISO format)")
+    parser.add_argument("--base-dir", help="Output directory")
     parser.add_argument("--max-runtime", type=int, help="Max runtime in minutes (realtime)")
     parser.add_argument("--rerun", action="store_true", help="Delete output directories before running")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
@@ -74,15 +74,15 @@ def main():
     cli_cfg = CLIConfig.model_validate({
         k: v
         for k, v in {
-            "radar_id": args.radar,
+            "radar_id": args.radar_id,
             "mode": args.mode,
+            "start_time": args.start_time,
+            "end_time": args.end_time,
+            "base_dir": args.base_dir,
             "log_level": "DEBUG" if args.verbose else None,
         }.items()
         if v is not None
     })
-    
-    # Store base_dir separately (for directory setup)
-    base_dir = args.outdir or user_cfg.base_dir or "/tmp/adapt_output"
     
     # Resolve to internal config (Param < User < CLI)
     config = resolve_config(param_cfg, user_cfg, cli_cfg)
@@ -90,14 +90,14 @@ def main():
     # Clean output directories if --rerun specified
     if args.rerun:
         import shutil
-        base_dir_path = Path(base_dir)
+        base_dir_path = Path(config.base_dir)
         if base_dir_path.exists():
-            print(f"🗑️  Cleaning output directory: {base_dir_path}")
+            print(f"Cleaning output directory: {base_dir_path}")
             shutil.rmtree(base_dir_path)
-            print("✓ Output directory cleaned")
+            print("Output directory cleaned")
     
     # Setup output directories
-    output_dirs = setup_output_directories(base_dir)
+    output_dirs = setup_output_directories(config.base_dir)
     
     # Print summary
     print(f"\n{'='*60}")
@@ -106,8 +106,15 @@ def main():
     print(f"Config: {args.config}")
     print(f"Radar:  {config.downloader.radar_id}")
     print(f"Mode:   {config.mode}")
-    print(f"Output: {base_dir}")
+    print(f"Output: {config.base_dir}")
     print('='*60)
+
+    if args.verbose:
+        import json
+        print("\nFull Internal Configuration:")
+        # Use model_dump_json for pretty printing, or just model_dump
+        print(json.dumps(config.model_dump(), indent=2))
+        print('='*60)
     
     # Run pipeline
     orchestrator = PipelineOrchestrator(config, output_dirs)

@@ -68,7 +68,7 @@ def setup_output_directories(base_output_dir=None):
     for key, path in directories.items():
         path.mkdir(parents=True, exist_ok=True)
     
-    print("\n✓ Output directories created:")
+    print("\nOutput directories created:")
     for key, path in directories.items():
         print(f"  {key:12s}: {path}")
     print("=" * 70 + "\n")

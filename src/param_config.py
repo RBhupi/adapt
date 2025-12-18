@@ -23,9 +23,9 @@ PARAM_CONFIG: Dict = {
     "downloader": {
         "radar_id": None,
         "output_dir": None,
-        "latest_n": 5,
-        "minutes": 60,
-        "sleep_interval": 300,
+        "latest_files": 5,
+        "latest_minutes": 60,
+        "poll_interval_sec": 300,
         "start_time": None,
         "end_time": None,
     },
@@ -44,7 +44,7 @@ PARAM_CONFIG: Dict = {
         "threshold": 30,
         "min_cellsize_gridpoint": 5,
         "max_cellsize_gridpoint": None,
-        "closing_kernel": (2, 2),
+        "closing_kernel": (1, 1),
         "filter_by_size": True,
     },
     
@@ -70,8 +70,8 @@ PARAM_CONFIG: Dict = {
         "flow_params": {
             "pyr_scale": 0.5,
             "levels": 3,  # Pyramid levels
-            "winsize": 21,  # Window size
-            "iterations": 10,  # Number of iterations
+            "winsize": 10,  # Window size
+            "iterations": 3,  # Number of iterations
             "poly_n": 7,  # Polynomial expansion degree
             "poly_sigma": 1.5,  # Gaussian sigma
             "flags": 0,

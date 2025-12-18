@@ -10,20 +10,19 @@ class TestConfigResolution:
     """Test resolve_config() precedence and merging."""
 
     def test_resolve_config_all_defaults(self):
-        """Resolving with no user/CLI overrides uses all ParamConfig defaults."""
-        config = resolve_config(ParamConfig(), None, None)
-
-        assert isinstance(config, InternalConfig)
-        assert config.segmenter.threshold == 30.0
-        assert config.segmenter.closing_kernel == (1, 1)
-        assert config.downloader.radar_id is None  # No default radar_id
+        """Resolving with no user/CLI overrides fails due to missing required fields."""
+        import pytest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            resolve_config(ParamConfig(), None, None)
 
     def test_user_config_overrides_param_config(self):
         """UserConfig values override ParamConfig defaults."""
-        user = UserConfig(threshold_dbz=40)
+        user = UserConfig(threshold=40, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.threshold == 40.0
+        assert config.base_dir == "/tmp"
 
     def test_cli_config_with_valid_structure(self):
         """CLIConfig structure validation (if implemented)."""
@@ -36,8 +35,9 @@ class TestConfigResolution:
         """Full precedence: User > Param."""
         param = ParamConfig()
         user = UserConfig(
-            threshold_dbz=40,
-            radar_id="KDLH"
+            threshold=40,
+            radar_id="KDLH",
+            base_dir="/tmp"
         )
         config = resolve_config(param, user, None)
 
@@ -47,54 +47,54 @@ class TestConfigResolution:
         assert config.downloader.radar_id == "KDLH"
 
     def test_empty_user_config_uses_all_param_defaults(self):
-        """Empty UserConfig() doesn't override anything."""
-        config = resolve_config(ParamConfig(), UserConfig(), None)
-
-        assert config.segmenter.threshold == 30.0
-        assert config.projector.max_projection_steps == 1
+        """Empty UserConfig() doesn't override anything, but still fails if required fields missing."""
+        import pytest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            resolve_config(ParamConfig(), UserConfig(), None)
 
     def test_none_user_config_uses_all_param_defaults(self):
-        """None UserConfig doesn't override anything."""
-        config = resolve_config(ParamConfig(), None, None)
-
-        assert config.segmenter.threshold == 30.0
-        assert config.projector.max_projection_steps == 1
+        """None UserConfig doesn't override anything, but still fails if required fields missing."""
+        import pytest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            resolve_config(ParamConfig(), None, None)
 
 
 class TestUserConfigAliases:
     """Test UserConfig flat aliases map correctly."""
 
-    def test_threshold_dbz_alias(self):
-        """threshold_dbz flat alias maps to segmenter.threshold."""
-        user = UserConfig(threshold_dbz=35)
+    def test_threshold_alias(self):
+        """threshold flat alias maps to segmenter.threshold."""
+        user = UserConfig(threshold=35, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.threshold == 35.0
 
     def test_radar_id_alias(self):
         """radar_id flat alias maps to downloader.radar_id."""
-        user = UserConfig(radar_id="KDIX")
+        user = UserConfig(radar_id="KDIX", base_dir="/tmp")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.downloader.radar_id == "KDIX"
 
     def test_reflectivity_var_alias(self):
         """reflectivity_var alias maps to global var_names."""
-        user = UserConfig(reflectivity_var="dbz")
+        user = UserConfig(reflectivity_var="dbz", base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.global_.var_names.reflectivity == "dbz"
 
-    def test_projection_steps_alias(self):
-        """projection_steps alias maps to projector.max_projection_steps."""
-        user = UserConfig(projection_steps=5)
+    def test_max_projection_steps_alias(self):
+        """max_projection_steps alias maps to projector.max_projection_steps."""
+        user = UserConfig(max_projection_steps=5, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.projector.max_projection_steps == 5
 
-    def test_min_cell_size_alias(self):
-        """min_cell_size alias maps to segmenter.min_cellsize_gridpoint."""
-        user = UserConfig(min_cell_size=10)
+    def test_min_cellsize_gridpoint_alias(self):
+        """min_cellsize_gridpoint alias maps to segmenter.min_cellsize_gridpoint."""
+        user = UserConfig(min_cellsize_gridpoint=10, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.min_cellsize_gridpoint == 10
@@ -102,7 +102,9 @@ class TestUserConfigAliases:
     def test_nested_segmenter_override(self):
         """Nested segmenter config overrides flat alias."""
         user = UserConfig(
-            threshold_dbz=30,
+            base_dir="/tmp",
+            radar_id="KHTX",
+            threshold=30,
             segmenter=UserSegmenterConfig(threshold=40)
         )
         config = resolve_config(ParamConfig(), user, None)
@@ -116,7 +118,7 @@ class TestTypeCoercion:
 
     def test_int_coerced_to_float_for_threshold(self):
         """Integer threshold is coerced to float."""
-        user = UserConfig(threshold_dbz=35)  # int
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX", threshold=35)  # int
         config = resolve_config(ParamConfig(), user, None)
 
         assert isinstance(config.segmenter.threshold, float)
@@ -124,7 +126,7 @@ class TestTypeCoercion:
 
     def test_int_coerced_to_float_for_z_level(self):
         """Integer z_level is coerced to float."""
-        user = UserConfig(z_level=1500)  # int
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX", z_level=1500)  # int
         config = resolve_config(ParamConfig(), user, None)
 
         assert isinstance(config.global_.z_level, float)
@@ -132,14 +134,14 @@ class TestTypeCoercion:
 
     def test_method_normalized_to_lowercase(self):
         """Method names are normalized to lowercase."""
-        user = UserConfig(segmentation_method="THRESHOLD")
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX", segmentation_method="THRESHOLD")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.method == "threshold"
 
     def test_uppercase_radar_id_preserved(self):
         """Radar IDs are preserved in uppercase."""
-        user = UserConfig(radar_id="KDIX")
+        user = UserConfig(base_dir="/tmp", radar_id="KDIX")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.downloader.radar_id == "KDIX"
@@ -150,7 +152,7 @@ class TestEdgeCases:
 
     def test_none_values_dont_override(self):
         """None values in UserConfig don't override ParamConfig."""
-        user = UserConfig(threshold_dbz=None, radar_id="KDIX")
+        user = UserConfig(threshold=None, radar_id="KDIX", base_dir="/tmp")
         config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.threshold == 30.0  # default, not overridden
@@ -158,7 +160,7 @@ class TestEdgeCases:
 
     def test_dict_user_config_accepted(self):
         """Dict can be passed as UserConfig (converted by Pydantic)."""
-        user_dict = {"threshold_dbz": 35, "radar_id": "KDLH"}
+        user_dict = {"threshold": 35, "radar_id": "KDLH", "base_dir": "/tmp"}
         config = resolve_config(ParamConfig(), user_dict, None)
 
         assert config.segmenter.threshold == 35.0
@@ -167,7 +169,7 @@ class TestEdgeCases:
     def test_empty_cli_config_dict_accepted(self):
         """Empty dict can be passed as CLIConfig (converted by Pydantic)."""
         cli_dict = {}
-        user = UserConfig(threshold_dbz=40)
+        user = UserConfig(threshold=40, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, cli_dict)
 
         # Empty CLI dict doesn't override anything
@@ -180,7 +182,8 @@ class TestEdgeCases:
 
     def test_internal_config_is_complete(self):
         """Returned InternalConfig is complete with all fields."""
-        config = resolve_config(ParamConfig(), None, None)
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX")
+        config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter is not None
         assert config.projector is not None
@@ -192,7 +195,8 @@ class TestDefaultValues:
 
     def test_segmenter_defaults(self):
         """Segmenter defaults match old hardcoded values."""
-        config = resolve_config(ParamConfig(), None, None)
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX")
+        config = resolve_config(ParamConfig(), user, None)
 
         assert config.segmenter.threshold == 30.0
         assert config.segmenter.closing_kernel == (1, 1)
@@ -201,7 +205,8 @@ class TestDefaultValues:
 
     def test_projector_defaults(self):
         """Projector defaults match old hardcoded values."""
-        config = resolve_config(ParamConfig(), None, None)
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX")
+        config = resolve_config(ParamConfig(), user, None)
 
         assert config.projector.method == "adapt_default"
         assert config.projector.max_projection_steps == 1
@@ -210,14 +215,16 @@ class TestDefaultValues:
 
     def test_downloader_defaults(self):
         """Downloader defaults are initialized."""
-        config = resolve_config(ParamConfig(), None, None)
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX")
+        config = resolve_config(ParamConfig(), user, None)
 
-        assert config.downloader.latest_n > 0
-        assert config.downloader.sleep_interval > 0
+        assert config.downloader.latest_files > 0
+        assert config.downloader.poll_interval_sec > 0
 
     def test_regridder_defaults(self):
         """Regridder defaults are complete."""
-        config = resolve_config(ParamConfig(), None, None)
+        user = UserConfig(base_dir="/tmp", radar_id="KHTX")
+        config = resolve_config(ParamConfig(), user, None)
 
         assert config.regridder.grid_shape is not None
         assert len(config.regridder.grid_shape) == 3
@@ -232,7 +239,7 @@ class TestConfigValidation:
         with pytest.raises(Exception):
             resolve_config(
                 ParamConfig(),
-                UserConfig(segmentation_method="invalid_method_xyz"),
+                UserConfig(segmentation_method="invalid_method_xyz", base_dir="/tmp", radar_id="KHTX"),
                 None
             )
 
@@ -240,21 +247,22 @@ class TestConfigValidation:
         """Negative threshold is coerced to float but should work."""
         # Note: Pydantic may allow negative threshold if no constraint
         # This test documents current behavior
-        user = UserConfig(threshold_dbz=-10)
+        user = UserConfig(threshold=-10, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
         assert config.segmenter.threshold == -10.0
 
     def test_zero_min_cellsize_allowed(self):
         """Zero min_cellsize is valid (means no filtering)."""
-        user = UserConfig(min_cell_size=0)
+        user = UserConfig(min_cellsize_gridpoint=0, base_dir="/tmp", radar_id="KHTX")
         config = resolve_config(ParamConfig(), user, None)
         assert config.segmenter.min_cellsize_gridpoint == 0
 
     def test_valid_field_accepted(self):
         """Valid fields in user config are accepted."""
         user_dict = {
-            "threshold_dbz": 35,
-            "radar_id": "KDIX"
+            "threshold": 35,
+            "radar_id": "KDIX",
+            "base_dir": "/tmp"
         }
         config = resolve_config(ParamConfig(), user_dict, None)
         assert config.segmenter.threshold == 35.0
@@ -268,11 +276,12 @@ class TestIntegration:
         """Full workflow: param + user."""
         user = UserConfig(
             mode="historical",
-            threshold_dbz=35,
+            threshold=35,
             radar_id="KDLH",
+            base_dir="/tmp",
             start_time="2024-01-01T00:00:00Z",
             end_time="2024-01-01T12:00:00Z",
-            projection_steps=3,
+            max_projection_steps=3,
             segmenter=UserSegmenterConfig(
                 filter_by_size=False
             )
@@ -291,9 +300,10 @@ class TestIntegration:
         """Real use case: custom radar with strict threshold."""
         user = UserConfig(
             radar_id="KLTX",
-            threshold_dbz=40,
+            base_dir="/tmp",
+            threshold=40,
             reflectivity_var="reflectivity_dbz",
-            min_cell_size=20
+            min_cellsize_gridpoint=20
         )
         config = resolve_config(ParamConfig(), user, None)
 
@@ -305,6 +315,8 @@ class TestIntegration:
     def test_nested_config_complex_flow_params(self):
         """Complex nested config with custom flow parameters."""
         user = UserConfig(
+            base_dir="/tmp",
+            radar_id="KHTX",
             projector=UserProjectorConfig(
                 max_projection_steps=5,
                 flow_params={

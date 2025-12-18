@@ -60,7 +60,7 @@ class RadarCellAnalyzer:
        - Projection: forward-projected motion centroids (0-5 steps)
     
     2. **Area and Size**:
-       - Cell area in km² (computed from grid spacing)
+       - Cell area in km2 (computed from grid spacing)
        - Grid point count
     
     3. **Radar Statistics** (per variable):
@@ -176,7 +176,7 @@ class RadarCellAnalyzer:
               - `cell_centroid_projection_0_{x,y,lat,lon}` to `_4_...` : Projections
             
             - **Size**:
-              - `cell_area_km2` : Cell area in square kilometers
+              - `cell_area_sqkm` : Cell area in square kilometers
               - `cell_area_npixels` : Number of grid points
             
             - **Radar Statistics** (per variable: reflectivity, velocity, etc.):
@@ -187,7 +187,7 @@ class RadarCellAnalyzer:
               - `cell_heading_<stat>` : Direction/speed statistics
             
             - **Metadata**:
-              - `scan_time` : Timestamp of radar scan
+              - `time` : Timestamp of radar scan
               - `z_level_m` : Altitude of this slice
             
         Raises
@@ -210,7 +210,7 @@ class RadarCellAnalyzer:
         >>> analyzer = RadarCellAnalyzer(config)
         >>> df = analyzer.extract(ds_segmented)
         >>> print(f"Found {len(df)} cells")
-        >>> print(df[['cell_label', 'cell_area_km2', 'radar_reflectivity_mean']])
+        >>> print(df[['cell_label', 'cell_area_sqkm', 'radar_reflectivity_mean']])
         >>> df.to_sql('cells', conn, if_exists='append')  # Database storage
         """
         # Get labels variable name from config
@@ -237,14 +237,18 @@ class RadarCellAnalyzer:
             )
             results.append(props)
 
-        return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+        if df.empty:
+            # Ensure required columns exist even if empty to satisfy contracts
+            return pd.DataFrame(columns=["cell_label", "cell_area_sqkm", "time"])
+        return df
 
     def _find_nearest_z(self, ds, z_level, z_name="z"):
         """Find index of nearest z-level."""
         return int(np.argmin(np.abs(ds[z_name].values - z_level)))
 
     def _pixel_area_km2(self, ds):
-        """Compute pixel area in km²."""
+        """Compute pixel area in km2."""
         dx = float(np.abs(ds.x[1] - ds.x[0]))
         dy = float(np.abs(ds.y[1] - ds.y[0]))
         return (dx * dy) / 1e6

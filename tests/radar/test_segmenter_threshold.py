@@ -9,7 +9,7 @@ pytestmark = pytest.mark.unit
 
 def test_threshold_filters_all(simple_2d_ds, make_config):
     """Threshold higher than max value results in no cells."""
-    config = make_config(threshold_dbz=50)  # Higher than 40 in simple_2d_ds
+    config = make_config(threshold=50)  # Higher than 40 in simple_2d_ds
     seg = RadarCellSegmenter(config)
 
     out = seg.segment(simple_2d_ds)
@@ -24,7 +24,7 @@ def test_threshold_filters_all(simple_2d_ds, make_config):
 
 def test_threshold_creates_at_least_one_cell(simple_2d_ds, make_config):
     """Threshold below max value creates cells."""
-    config = make_config(threshold_dbz=30, min_cell_size=2)
+    config = make_config(threshold=30, min_cellsize_gridpoint=2)
     seg = RadarCellSegmenter(config)
 
     out = seg.segment(simple_2d_ds)
@@ -51,7 +51,7 @@ def test__multiple_cells(large_multi_cell_ds, make_config):
     # Don't filter by size for this test
     from adapt.schemas.user import UserSegmenterConfig
     config = make_config(
-        threshold_dbz=30, 
+        threshold=30, 
         segmenter=UserSegmenterConfig(filter_by_size=False)
     )
     seg = RadarCellSegmenter(config)
