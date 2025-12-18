@@ -23,11 +23,17 @@ def param_config():
     Use this as the base for all test configs. Override specific values
     using user_config or by creating custom UserConfig instances.
     """
-    return ParamConfig()
+    # For tests, provide a default radar_id since it's required at runtime
+    from adapt.schemas import ParamConfig as PC
+    
+    config = PC()
+    # Override radar_id with a test default
+    config.downloader.radar_id = "TEST_RADAR"
+    return config
 
 
 @pytest.fixture
-def internal_config(param_config):
+def internal_config(param_config, temp_dir):
     """Fully validated runtime configuration (no overrides).
     
     Use this when tests don't care about specific config values and just
@@ -39,11 +45,12 @@ def internal_config(param_config):
     ...     seg = RadarCellSegmenter(internal_config)
     ...     assert seg.method == "threshold"
     """
-    return resolve_config(param_config, None, None)
+    user = UserConfig(base_dir=str(temp_dir))
+    return resolve_config(param_config, user, None)
 
 
 @pytest.fixture
-def make_config(param_config):
+def make_config(param_config, temp_dir):
     """Factory fixture for creating custom test configs.
     
     Use this when you need to override specific values for a test.
@@ -52,17 +59,18 @@ def make_config(param_config):
     Examples
     --------
     >>> def test_custom_threshold(make_config):
-    ...     config = make_config(threshold_dbz=35)
+    ...     config = make_config(threshold=35)
     ...     seg = RadarCellSegmenter(config)
     ...     assert seg.threshold == 35.0
     """
     def _make(**user_overrides):
         """Create InternalConfig with user overrides."""
-        if user_overrides:
-            user = UserConfig(**user_overrides)
-            return resolve_config(param_config, user, None)
-        else:
-            return resolve_config(param_config, None, None)
+        # Ensure base_dir is always present in tests
+        if "base_dir" not in user_overrides:
+            user_overrides["base_dir"] = str(temp_dir)
+            
+        user = UserConfig(**user_overrides)
+        return resolve_config(param_config, user, None)
     
     return _make
 

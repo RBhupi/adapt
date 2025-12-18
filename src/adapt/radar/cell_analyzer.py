@@ -60,7 +60,7 @@ class RadarCellAnalyzer:
        - Projection: forward-projected motion centroids (0-5 steps)
     
     2. **Area and Size**:
-       - Cell area in km² (computed from grid spacing)
+       - Cell area in km2 (computed from grid spacing)
        - Grid point count
     
     3. **Radar Statistics** (per variable):
@@ -176,7 +176,7 @@ class RadarCellAnalyzer:
               - `cell_centroid_projection_0_{x,y,lat,lon}` to `_4_...` : Projections
             
             - **Size**:
-              - `cell_area_km2` : Cell area in square kilometers
+              - `cell_area_sqkm` : Cell area in square kilometers
               - `cell_area_npixels` : Number of grid points
             
             - **Radar Statistics** (per variable: reflectivity, velocity, etc.):
@@ -187,7 +187,7 @@ class RadarCellAnalyzer:
               - `cell_heading_<stat>` : Direction/speed statistics
             
             - **Metadata**:
-              - `scan_time` : Timestamp of radar scan
+              - `time` : Timestamp of radar scan
               - `z_level_m` : Altitude of this slice
             
         Raises
@@ -210,18 +210,11 @@ class RadarCellAnalyzer:
         >>> analyzer = RadarCellAnalyzer(config)
         >>> df = analyzer.extract(ds_segmented)
         >>> print(f"Found {len(df)} cells")
-        >>> print(df[['cell_label', 'cell_area_km2', 'radar_reflectivity_mean']])
+        >>> print(df[['cell_label', 'cell_area_sqkm', 'radar_reflectivity_mean']])
         >>> df.to_sql('cells', conn, if_exists='append')  # Database storage
         """
         # Get labels variable name from config
         labels_name = self.config.global_.var_names.cell_labels
-
-        # Check for required labels
-        if labels_name not in ds.data_vars:
-            raise ValueError(
-                f"Dataset does not contain '{labels_name}'. "
-                "Run the segmenter first."
-            )
 
         # Extract reflectivity (already 2D)
         refl = ds[self.reflectivity_field].values
@@ -244,40 +237,37 @@ class RadarCellAnalyzer:
             )
             results.append(props)
 
-        return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+        if df.empty:
+            # Ensure required columns exist even if empty to satisfy contracts
+            return pd.DataFrame(columns=["cell_label", "cell_area_sqkm", "time"])
+        return df
 
     def _find_nearest_z(self, ds, z_level, z_name="z"):
         """Find index of nearest z-level."""
-        if z_name not in ds.coords:
-            return 0
         return int(np.argmin(np.abs(ds[z_name].values - z_level)))
 
     def _pixel_area_km2(self, ds):
-        """Compute pixel area in km²."""
+        """Compute pixel area in km2."""
         dx = float(np.abs(ds.x[1] - ds.x[0]))
         dy = float(np.abs(ds.y[1] - ds.y[0]))
         return (dx * dy) / 1e6
 
     def _get_lat_lon_grids(self, ds):
-        """Get lat/lon grids from dataset, generating if needed."""
+        """Get lat/lon grids from dataset.
+        
+        Returns lat/lon grids if available, otherwise returns placeholder grids
+        of zeros (valid for in-memory analysis, invalid for geographic output).
+        """
         if "lat" in ds.coords and "lon" in ds.coords:
             return ds["lat"].values, ds["lon"].values
         elif "lat" in ds.data_vars and "lon" in ds.data_vars:
             return ds["lat"].values, ds["lon"].values
         else:
-            # Fallback to origin coordinates
-            logger.debug("lat/lon grids not found, using origin coordinates")
-            origin_lat = float(ds.attrs.get("origin_latitude", 0.0))
-            origin_lon = float(ds.attrs.get("origin_longitude", 0.0))
-            
-            # Try to get from data variables if not in attrs
-            if origin_lat == 0.0 and "origin_latitude" in ds:
-                origin_lat = float(ds["origin_latitude"].values)
-            if origin_lon == 0.0 and "origin_longitude" in ds:
-                origin_lon = float(ds["origin_longitude"].values)
-
-            lat_grid = np.full((len(ds.y), len(ds.x)), origin_lat)
-            lon_grid = np.full((len(ds.y), len(ds.x)), origin_lon)
+            # No lat/lon available - use placeholder zeros
+            # (This should only happen in testing; production data always has coords)
+            lat_grid = np.zeros((len(ds.y), len(ds.x)))
+            lon_grid = np.zeros((len(ds.y), len(ds.x)))
             return lat_grid, lon_grid
 
     def _get_valid_data_vars(self, ds):
@@ -394,8 +384,8 @@ class RadarCellAnalyzer:
             # Geometric centroid - both XY and lat/lon
             "cell_centroid_geom_x": geom_props["centroid_x"],
             "cell_centroid_geom_y": geom_props["centroid_y"],
-            "cell_centroid_geom_lat": geom_props.get("centroid_lat", np.nan),
-            "cell_centroid_geom_lon": geom_props.get("centroid_lon", np.nan),
+            "cell_centroid_geom_lat": geom_props["centroid_lat"],
+            "cell_centroid_geom_lon": geom_props["centroid_lon"],
             # Max reflectivity centroid - both XY and lat/lon
             "cell_centroid_maxdbz_x": centroid_maxdbz_x,
             "cell_centroid_maxdbz_y": centroid_maxdbz_y,

@@ -99,7 +99,7 @@ def resolve_config(
     >>> param = ParamConfig()
     >>> 
     >>> # User wants higher threshold
-    >>> user = UserConfig(threshold_dbz=35, radar_id="KHTX")
+    >>> user = UserConfig(threshold=35, radar_id="KHTX")
     >>> 
     >>> # Resolve to internal config
     >>> config = resolve_config(param, user)
@@ -136,13 +136,58 @@ def resolve_config(
     # Deep merge: param < user < cli
     merged = deep_merge(param_dict, user_overrides, cli_overrides)
     
+    # Special handling for analyzer.exclude_fields: AMEND instead of REPLACE
+    # We want to keep the internal defaults and add user-specified ones.
+    default_excludes = set(param.analyzer.exclude_fields)
+    user_excludes = set()
+    
+    # Check top-level UserConfig alias
+    if user.exclude_fields:
+        user_excludes.update(user.exclude_fields)
+    
+    # Check nested UserConfig section
+    if user.analyzer and user.analyzer.exclude_fields:
+        user_excludes.update(user.analyzer.exclude_fields)
+    
+    # Check CLI overrides (if we ever add analyzer to CLIConfig)
+    if hasattr(cli, 'analyzer') and cli.analyzer and cli.analyzer.exclude_fields:
+        user_excludes.update(cli.analyzer.exclude_fields)
+    
+    if user_excludes:
+        merged.setdefault("analyzer", {})["exclude_fields"] = list(default_excludes | user_excludes)
+
+    # Schema responsibility: Infer historical mode from times if mode not explicitly set
+    # This handles cases where times are provided but mode is not.
+    # We check user.mode and cli.mode directly to see if they were explicitly set.
+    if user.mode is None and cli.mode is None:
+        downloader_dict = merged.get("downloader", {})
+        if downloader_dict.get("start_time") or downloader_dict.get("end_time"):
+            merged["mode"] = "historical"
+    
     # Cap max_projection_steps at 10
     if "projector" in merged and "max_projection_steps" in merged["projector"]:
         merged["projector"]["max_projection_steps"] = min(
             merged["projector"]["max_projection_steps"], 10
         )
     
+    # Add mode to downloader config for validation
+    if "downloader" in merged and "mode" not in merged["downloader"]:
+        merged["downloader"]["mode"] = merged.get("mode", "realtime")
+    
     # Validate and freeze as InternalConfig
     internal = InternalConfig.model_validate(merged)
+    
+    # Conditional validation: Historical mode requires start_time and end_time
+    if internal.downloader.mode == "historical":
+        if not internal.downloader.start_time:
+            raise ValueError(
+                "start_time is required when mode='historical'. "
+                "Please provide start_time in user config or CLI arguments."
+            )
+        if not internal.downloader.end_time:
+            raise ValueError(
+                "end_time is required when mode='historical'. "
+                "Please provide end_time in user config or CLI arguments."
+            )
     
     return internal

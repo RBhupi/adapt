@@ -22,8 +22,8 @@ def test_realtime_download_hybrid(tmp_path, fake_scan, fake_aws_conn, make_confi
 
     config = make_config(
         radar_id="KDIX",
-        latest_files=2,
-        latest_minutes=30,
+        latest_n=2,
+        minutes=30,
     )
 
     d = AwsNexradDownloader(

@@ -6,7 +6,7 @@ import xarray as xr
 import tempfile
 import shutil
 from pathlib import Path
-from adapt.schemas import ParamConfig, InternalConfig
+from adapt.schemas import ParamConfig, InternalConfig, UserConfig
 from adapt.schemas.resolve import resolve_config
 from adapt.setup_directories import setup_output_directories
 
@@ -255,10 +255,11 @@ def temp_dir():
 
 
 @pytest.fixture
-def radar_config() -> InternalConfig:
+def radar_config(temp_dir) -> InternalConfig:
     """InternalConfig for radar module tests."""
     param = ParamConfig()
-    return resolve_config(param, None, None)
+    user = UserConfig(base_dir=str(temp_dir), radar_id="TEST_RADAR")
+    return resolve_config(param, user, None)
 
 
 @pytest.fixture

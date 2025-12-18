@@ -127,7 +127,6 @@ class PipelineOrchestrator:
 
         # File tracking (initialized in _setup_logging)
         self.tracker = None
-        self.tracker = None
 
         # Lifecycle state
         self._stop_event = False
@@ -144,7 +143,7 @@ class PipelineOrchestrator:
         log_level = getattr(logging, self.config.logging.level.upper(), logging.INFO)
 
         # Get log path from output_dirs
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id
         log_dir = Path(self.output_dirs["logs"])
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"pipeline_{radar_id}.log"
@@ -246,7 +245,7 @@ class PipelineOrchestrator:
             file_tracker=self.tracker,
         )
         self.downloader.start()
-        logger.info("✓ Downloader started")
+        logger.info("Downloader started")
 
         # Start Processor thread
         logger.info("Starting Processor...")
@@ -258,7 +257,7 @@ class PipelineOrchestrator:
             file_tracker=self.tracker,
         )
         self.processor.start()
-        logger.info("✓ Processor started")
+        logger.info("Processor started")
 
         # Start Plotter thread
         logger.info("Starting Plotter...")
@@ -270,7 +269,7 @@ class PipelineOrchestrator:
             name="RadarPlotter"
         )
         self.plotter.start()
-        logger.info("✓ Plotter started")
+        logger.info("Plotter started")
 
         mode = self.config.mode
         logger.info("Pipeline running in %s mode. Press Ctrl+C to stop.", mode.upper())
@@ -283,23 +282,44 @@ class PipelineOrchestrator:
             self.stop()
 
     def _main_loop(self, mode: str):
-        """Main monitoring loop."""
+        """Monitoring loop: check exit conditions and log status."""
+        last_status_time = time.time()
+        
         while True:
-            # Historical mode: check for completion
+            # 1. Check for thread failures or self-stops (e.g. ContractViolation)
+            if self.processor.stopped():
+                logger.critical("Processor has stopped (likely due to contract violation). Exiting.")
+                break
+            
+            if not self.processor.is_alive():
+                logger.critical("Processor thread died unexpectedly. Exiting.")
+                break
+
+            if not self.downloader.is_alive():
+                logger.critical("Downloader thread died unexpectedly. Exiting.")
+                break
+            
+            if not self.plotter.is_alive():
+                logger.critical("Plotter thread died unexpectedly. Exiting.")
+                break
+
+            # 2. Mode-specific exit conditions
             if mode == "historical":
                 if self._check_historical_complete():
                     break
 
-            # Realtime mode: check duration limit
             if mode == "realtime" and self._max_duration:
                 elapsed = time.time() - self._start_time
                 if elapsed > self._max_duration:
                     logger.info("Max duration reached")
                     break
 
-            # Status every 30 seconds
-            time.sleep(30)
-            self._log_status()
+            # 3. Status logging (every 30s)
+            if time.time() - last_status_time > 30:
+                self._log_status()
+                last_status_time = time.time()
+
+            time.sleep(1)
 
     def _check_historical_complete(self) -> bool:
         """Check if historical mode is complete. Returns True to exit."""
@@ -312,7 +332,7 @@ class PipelineOrchestrator:
             return False
 
         processed, expected = self.downloader.get_historical_progress()
-        logger.info("📦 Downloader complete: %d/%d files queued", processed, expected)
+        logger.info("Downloader complete: %d/%d files queued", processed, expected)
 
         # Stop downloader explicitly to signal thread termination
         self.downloader.stop()
@@ -339,7 +359,7 @@ class PipelineOrchestrator:
             if self.plotter.is_alive():
                 logger.warning("Plotter thread did not stop cleanly")
 
-        logger.info("✅ Historical mode complete")
+        logger.info("Historical mode complete")
         return True
 
     def _drain_queue(self, q: queue.Queue, name: str, timeout: int = 300):
@@ -356,7 +376,7 @@ class PipelineOrchestrator:
                 wait_count = 0  # Reset if progress is being made
                 last_size = current_size
             
-            logger.info("⏳ Waiting for %s queue: %d remaining", name, current_size)
+            logger.info("Waiting for %s queue: %d remaining", name, current_size)
             time.sleep(5)
             
             # Check timeout both by iteration count and elapsed time
@@ -441,9 +461,9 @@ class PipelineOrchestrator:
 
         logger.info(
             "Status: D=%s P=%s L=%s Q=%d PQ=%d%s",
-            "✓" if self.downloader and self.downloader.is_alive() else "✗",
-            "✓" if self.processor and self.processor.is_alive() else "✗",
-            "✓" if self.plotter and self.plotter.is_alive() else "✗",
+            "UP" if self.downloader and self.downloader.is_alive() else "DOWN",
+            "UP" if self.processor and self.processor.is_alive() else "DOWN",
+            "UP" if self.plotter and self.plotter.is_alive() else "DOWN",
             self.downloader_queue.qsize(),
             self.plotter_queue.qsize(),
             hist_status

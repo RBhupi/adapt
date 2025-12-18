@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar KHTX
+    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KHTX
     python scripts/run_nexrad_pipeline.py scripts/user_config.py --mode historical
 
 Note: User config in scripts/user_config.py, expert config in src/param_config.py
@@ -51,11 +51,11 @@ def load_user_config_dict(config_path: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Run the ADAPT radar processing pipeline")
     parser.add_argument("config", help="Path to user config file")
-    parser.add_argument("--radar", help="Override radar ID")
+    parser.add_argument("--radar-id", help="Override radar ID")
     parser.add_argument("--mode", choices=["realtime", "historical"], help="Override mode")
-    parser.add_argument("--start", help="Start time (ISO format)")
-    parser.add_argument("--end", help="End time (ISO format)")
-    parser.add_argument("--outdir", help="Output directory")
+    parser.add_argument("--start-time", help="Start time (ISO format)")
+    parser.add_argument("--end-time", help="End time (ISO format)")
+    parser.add_argument("--base-dir", help="Output directory")
     parser.add_argument("--max-runtime", type=int, help="Max runtime in minutes (realtime)")
     parser.add_argument("--rerun", action="store_true", help="Delete output directories before running")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
@@ -64,69 +64,40 @@ def main():
     # Load configurations
     param_cfg = ParamConfig()  # Expert defaults
     
-    # Load user config from file
+    # Load user config from file (pass raw dict directly to UserConfig)
     user_cfg_dict = load_user_config_dict(args.config)
-    # Convert uppercase keys to UserConfig-compatible format
-    user_cfg_dict_normalized = {
-        "mode": user_cfg_dict.get("MODE"),
-        "radar_id": user_cfg_dict.get("RADAR_ID"),
-        "base_dir": user_cfg_dict.get("BASE_DIR"),
-        "latest_files": user_cfg_dict.get("LATEST_FILES"),
-        "latest_minutes": user_cfg_dict.get("LATEST_MINUTES"),
-        "poll_interval_sec": user_cfg_dict.get("POLL_INTERVAL_SEC"),
-        "start_time": user_cfg_dict.get("START_TIME"),
-        "end_time": user_cfg_dict.get("END_TIME"),
-        "grid_shape": user_cfg_dict.get("GRID_SHAPE"),
-        "grid_limits": user_cfg_dict.get("GRID_LIMITS"),
-        "z_level": user_cfg_dict.get("Z_LEVEL"),
-        "reflectivity_var": user_cfg_dict.get("REFLECTIVITY_VAR"),
-        "segmentation_method": user_cfg_dict.get("SEGMENTATION_METHOD"),
-        "threshold_dbz": user_cfg_dict.get("THRESHOLD_DBZ"),
-        "min_cell_size": user_cfg_dict.get("MIN_CELL_SIZE"),
-        "max_cell_size": user_cfg_dict.get("MAX_CELL_SIZE"),
-        "projection_method": user_cfg_dict.get("PROJECTION_METHOD"),
-        "projection_steps": user_cfg_dict.get("PROJECTION_STEPS"),
-    }
-    # Remove None values
-    user_cfg_dict_normalized = {k: v for k, v in user_cfg_dict_normalized.items() if v is not None}
-    user_cfg = UserConfig(**user_cfg_dict_normalized)
+    # UserConfig performs normalization/validation internally (including
+    # legacy uppercase keys). Do NOT mutate the resulting object.
+    user_cfg = UserConfig.model_validate(user_cfg_dict)
     
-    # Create CLI config from command-line args
-    cli_cfg_dict = {}
-    if args.radar:
-        cli_cfg_dict["radar_id"] = args.radar
-    if args.mode:
-        cli_cfg_dict["mode"] = args.mode
-    if args.verbose:
-        cli_cfg_dict["log_level"] = "DEBUG"
-    cli_cfg = CLIConfig(**cli_cfg_dict)
+    # Create CLI config from command-line args (CLIConfig owns overrides)
+    cli_cfg = CLIConfig.model_validate({
+        k: v
+        for k, v in {
+            "radar_id": args.radar_id,
+            "mode": args.mode,
+            "start_time": args.start_time,
+            "end_time": args.end_time,
+            "base_dir": args.base_dir,
+            "log_level": "DEBUG" if args.verbose else None,
+        }.items()
+        if v is not None
+    })
     
-    # Store base_dir separately (for directory setup)
-    base_dir = args.outdir or user_cfg.base_dir or "/tmp/adapt_output"
-    
-    # Apply start/end time overrides if provided
-    if args.start or args.end:
-        # These override user config before resolution
-        if args.start:
-            user_cfg_dict_normalized["start_time"] = args.start
-        if args.end:
-            user_cfg_dict_normalized["end_time"] = args.end
-        user_cfg = UserConfig(**user_cfg_dict_normalized)
-    
-    # Resolve to internal config
+    # Resolve to internal config (Param < User < CLI)
     config = resolve_config(param_cfg, user_cfg, cli_cfg)
     
     # Clean output directories if --rerun specified
     if args.rerun:
         import shutil
-        base_dir_path = Path(base_dir)
+        base_dir_path = Path(config.base_dir)
         if base_dir_path.exists():
-            print(f"🗑️  Cleaning output directory: {base_dir_path}")
+            print(f"Cleaning output directory: {base_dir_path}")
             shutil.rmtree(base_dir_path)
-            print("✓ Output directory cleaned")
+            print("Output directory cleaned")
     
     # Setup output directories
-    output_dirs = setup_output_directories(base_dir)
+    output_dirs = setup_output_directories(config.base_dir)
     
     # Print summary
     print(f"\n{'='*60}")
@@ -135,8 +106,15 @@ def main():
     print(f"Config: {args.config}")
     print(f"Radar:  {config.downloader.radar_id}")
     print(f"Mode:   {config.mode}")
-    print(f"Output: {base_dir}")
+    print(f"Output: {config.base_dir}")
     print('='*60)
+
+    if args.verbose:
+        import json
+        print("\nFull Internal Configuration:")
+        # Use model_dump_json for pretty printing, or just model_dump
+        print(json.dumps(config.model_dump(), indent=2))
+        print('='*60)
     
     # Run pipeline
     orchestrator = PipelineOrchestrator(config, output_dirs)

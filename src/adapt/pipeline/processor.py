@@ -24,6 +24,13 @@ from adapt.radar.cell_segmenter import RadarCellSegmenter
 from adapt.radar.cell_analyzer import RadarCellAnalyzer
 from adapt.radar.cell_projector import RadarCellProjector
 from adapt.radar.radar_utils import compute_all_cell_centroids
+from adapt.contracts import (
+    ContractViolation,
+    assert_gridded,
+    assert_segmented,
+    assert_projected,
+    assert_analysis_output,
+)
 
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
@@ -165,9 +172,10 @@ class RadarProcessor(threading.Thread):
         self.analyzer = RadarCellAnalyzer(self.config)
         self.projector = RadarCellProjector(self.config)
 
-        # Keep last 2 datasets so we can compute flow and projections
+        # Keep last N datasets so we can compute flow and projections
+        # Uses max_history from config instead of hardcoding
         self.dataset_history = []  # List of (filepath, ds) tuples
-        self.max_history = 2
+        self.max_history = self.config.processor.max_history
 
         # SQLite database connection
         self.db_path = self._get_db_path()
@@ -181,11 +189,15 @@ class RadarProcessor(threading.Thread):
         Database is stored at: analysis/{radar_id}_cells_statistics.db
         This ensures all cells from a pipeline run (even across multiple dates)
         go into the same database.
+        
+        radar_id and output_dir are required fields from InternalConfig.downloader.
         """
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id  # Required field, no fallback
         analysis_dir = Path(self.output_dirs["analysis"])
         analysis_dir.mkdir(parents=True, exist_ok=True)
-        db_filename = f"{radar_id}_cells_statistics.db"
+        
+        # Use filename pattern from config
+        db_filename = self.config.processor.db_filename_pattern.format(radar_id=radar_id)
         return analysis_dir / db_filename
 
     def _init_database(self):
@@ -316,7 +328,7 @@ class RadarProcessor(threading.Thread):
         self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time ON cells(time)")
         self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time_volume_start ON cells(time_volume_start)")
         self.db_conn.commit()
-        logger.info("📊 Database schema created with composite PK (time, cell_label)")
+        logger.info("Database schema created with composite PK (time, cell_label)")
         logger.info(f"   Temporal columns: time_volume_start, time, time_volume_end (TIMESTAMP)")
         logger.info(f"   Total columns: {len(col_defs)} (includes future-proof centroid/heading/projection slots)")
 
@@ -344,15 +356,12 @@ class RadarProcessor(threading.Thread):
             
             # Validate file exists before attempting to process
             file_path = Path(filepath)
-            if not file_path.exists():
-                logger.error("File not found: %s", filepath)
-                return False
             
             file_id = Path(filepath).stem
             tracker = self.file_tracker
             if tracker and tracker.should_process(file_id, "analyzed") is False:
                 if tracker.should_process(file_id, "plotted") is False:
-                    logger.info("⏭️  Skipping already completed: %s", Path(filepath).name)
+                    logger.info("Skipping already completed: %s", Path(filepath).name)
                     return True
                 else:
                     self._requeue_for_plotting(file_id, filepath)
@@ -362,21 +371,22 @@ class RadarProcessor(threading.Thread):
 
             # Step 1: Load and regrid
             ds, ds_2d, nc_full_path, scan_time = self._load_and_regrid(filepath)
-            if ds is None or ds_2d is None:
-                logger.warning("Failed to load/regrid: %s", filepath)
-                return False
+            reflectivity_var = self.config.global_.var_names.reflectivity
+            assert_gridded(ds_2d, reflectivity_var)
 
             # Step 2: Segment
             ds_2d = self.segmenter.segment(ds_2d)
             labels_name = self.config.global_.var_names.cell_labels
-            if labels_name not in ds_2d.data_vars:
-                logger.warning("Segmentation failed for: %s", filepath)
-                return False
+            assert_segmented(ds_2d, labels_name)
             num_cells = int(ds_2d[labels_name].max().item())
             logger.info("Segmented: %d cells", num_cells)
 
             # Step 3: PROJECT (before analyzer so it has projection info)
             ds_2d = self._compute_projections(ds_2d, filepath)
+            
+            # Contract: if 2+ frames, projections should exist
+            if len(self.dataset_history) >= 2:
+                assert_projected(ds_2d, self.config.projector.max_projection_steps)
 
             # Step 4: Save segmentation NetCDF for visualization (no dependency on analysis)
             seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath, scan_time)
@@ -385,7 +395,7 @@ class RadarProcessor(threading.Thread):
                     item = {
                         'segmentation_nc': seg_nc_path,
                         'gridnc_file': None,
-                        'radar_id': self.config.downloader.radar_id or "UNKNOWN",
+                        'radar_id': self.config.downloader.radar_id,
                         'timestamp': scan_time,
                     }
                     self.output_queue.put_nowait(item)
@@ -395,9 +405,17 @@ class RadarProcessor(threading.Thread):
 
             # Step 5: Analyze (parallel with visualization - no dependency)
             result = self._analyze_and_save(ds_2d, filepath, nc_full_path, num_cells, scan_time)
-            
             return result
 
+        except ContractViolation as e:
+            logger.critical("💥 CRITICAL: Pipeline contract violated: %s", e)
+            logger.critical("This indicates a bug in pipeline logic. Stopping pipeline.")
+            self.stop()  # Signal processor to stop
+            tracker = self.file_tracker
+            if tracker:
+                file_id = Path(filepath).stem
+                tracker.mark_stage_complete(file_id, "analyzed", error=f"Contract violation: {e}")
+            return False
 
         except Exception as e:
             logger.exception("Error processing %s", filepath)
@@ -409,7 +427,7 @@ class RadarProcessor(threading.Thread):
 
     def _requeue_for_plotting(self, file_id, filepath):
         logger.info("Already analyzed, re-queuing for plot: %s", Path(filepath).name)
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id
         if self.output_queue:
             from adapt.setup_directories import get_analysis_path
             from datetime import datetime, timezone
@@ -447,7 +465,7 @@ class RadarProcessor(threading.Thread):
         
         from adapt.setup_directories import get_netcdf_path
         from datetime import datetime, timezone
-        radar_id = self.config.downloader.radar_id or "UNKNOWN"
+        radar_id = self.config.downloader.radar_id
         nc_filename = Path(filepath).stem
         try:
             parts = nc_filename.split('_')
@@ -471,8 +489,6 @@ class RadarProcessor(threading.Thread):
         if ds is None:
             ds = self.loader.load_and_regrid(filepath, grid_kwargs=None,
                                             save_netcdf=save_netcdf, output_dir=output_dir)
-        if ds is None:
-            return None, None, nc_full_path, scan_time
         ds_2d = self._extract_2d_slice(ds)
         logger.debug(f"Extracted 2D slice at z-level, shape: {ds_2d.dims}")
         return ds, ds_2d, nc_full_path, scan_time
@@ -510,7 +526,7 @@ class RadarProcessor(threading.Thread):
             # Projector returns 2D ds with cell_projections, flow_u, flow_v added
             ds_with_proj = self.projector.project([ds_prev, ds_curr])
             if ds_with_proj is not None:
-                logger.info(f"✓ Projections computed: {list(ds_with_proj.data_vars)}")
+                logger.info(f"Projections computed: {list(ds_with_proj.data_vars)}")
                 return ds_with_proj
         except Exception as e:
             logger.error(f"Optical flow projection failed: {e}", exc_info=True)
@@ -551,6 +567,10 @@ class RadarProcessor(threading.Thread):
         """Analyze cells (now has projection info), update tracker, insert into SQLite DB."""
         z_level = self.config.global_.z_level
         df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
+        
+        # Contract: analysis output must meet requirements
+        assert_analysis_output(df_cells)
+        
         file_id = Path(filepath).stem
         if df_cells.empty:
             logger.debug("No cells detected in: %s", Path(filepath).name)
@@ -575,7 +595,7 @@ class RadarProcessor(threading.Thread):
             # Append data (schema already exists)
             df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
         
-        logger.info("✓ Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
+        logger.info("Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
         tracker = self.file_tracker
         if tracker:
             tracker.mark_stage_complete(file_id, "analyzed", num_cells=len(df_cells))
@@ -701,7 +721,7 @@ class RadarProcessor(threading.Thread):
                 area_vals = df_cells["area_km2"].dropna()
                 if len(area_vals) > 0:
                     stats_parts.append(
-                        f"Area [km²] - min={area_vals.min():.1f}, "
+                        f"Area [km2] - min={area_vals.min():.1f}, "
                         f"max={area_vals.max():.1f}, "
                         f"mean={area_vals.mean():.1f}"
                     )
@@ -727,18 +747,18 @@ class RadarProcessor(threading.Thread):
 
             # Log summary
             summary_msg = " | ".join(stats_parts)
-            logger.info("📊 Cell Statistics: %s", summary_msg)
+            logger.info("Cell Statistics: %s", summary_msg)
 
             # Log individual cell details for small number of cells
             if num_cells <= 5:
                 for idx, row in df_cells.iterrows():
-                    cell_label = row.get("cell_label", "?")
-                    area = row.get("cell_area_sqkm", np.nan)
-                    refl_mean = row.get("radar_reflectivity_mean", np.nan)
-                    refl_max = row.get("radar_reflectivity_max", np.nan)
+                    cell_label = row["cell_label"]
+                    area = row["cell_area_sqkm"]
+                    refl_mean = row["radar_reflectivity_mean"]
+                    refl_max = row["radar_reflectivity_max"]
 
-                    detail_msg = f"Cell #{cell_label}: area={area:.1f} km², refl_mean={refl_mean:.1f} dBZ, refl_max={refl_max:.1f} dBZ"
-                    logger.info("  └─ %s", detail_msg)
+                    detail_msg = f"Cell #{cell_label}: area={area:.1f} km2, refl_mean={refl_mean:.1f} dBZ, refl_max={refl_max:.1f} dBZ"
+                    logger.info("  %s", detail_msg)
 
         except Exception as e:
             logger.debug("Could not log cell statistics: %s", e)
@@ -793,7 +813,7 @@ class RadarProcessor(threading.Thread):
         """
         try:
             from adapt.setup_directories import get_analysis_path
-            radar_id = self.config.downloader.radar_id or "UNKNOWN"
+            radar_id = self.config.downloader.radar_id
 
             # Create output path
             filename_stem = Path(filepath).stem
@@ -820,7 +840,7 @@ class RadarProcessor(threading.Thread):
 
             # Log what was saved
             components = list(ds.data_vars.keys())
-            logger.info(f"✓ Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
+            logger.info(f"Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
 
             return str(seg_nc_path)
 

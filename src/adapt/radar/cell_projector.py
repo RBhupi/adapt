@@ -309,7 +309,7 @@ class RadarCellProjector:
                 attrs={"units": "pixels/frame", "description": "heading in y direction"}
             )
             
-            logger.info(f"✓ Added cell_projections with {len(labels_proj_list)} projection steps")
+            logger.info(f"Added cell_projections with {len(labels_proj_list)} projection steps")
 
         return ds_out
     

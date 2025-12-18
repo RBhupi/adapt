@@ -19,8 +19,8 @@ def test_default_config(internal_config):
 def test_custom_config(make_config):
     """Segmenter respects user config overrides."""
     config = make_config(
-        threshold_dbz=45,
-        min_cell_size=10,
+        threshold=45,
+        min_cellsize_gridpoint=10,
         # Note: filter_by_size not exposed in UserConfig yet, uses default
     )
     

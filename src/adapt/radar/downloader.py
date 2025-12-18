@@ -54,9 +54,9 @@ class AwsNexradDownloader(threading.Thread):
             config={
                 "radar_id": "KDIX",
                 "output_dir": "/data/nexrad",
-                "latest_n": 5,
-                "minutes": 60,
-                "sleep_interval": 30
+                "latest_files": 5,
+                "latest_minutes": 60,
+                "poll_interval_sec": 30
             },
             result_queue=processor_queue
         )
@@ -115,11 +115,11 @@ class AwsNexradDownloader(threading.Thread):
         super().__init__(daemon=True)
 
         self.config = config
-        self.radar_id = config.downloader.radar_id or "KLOT"
+        self.radar_id = config.downloader.radar_id
         self.output_dir = Path(output_dir)
-        self.sleep_interval = config.downloader.sleep_interval
-        self.latest_n = config.downloader.latest_n
-        self.minutes = config.downloader.minutes
+        self.poll_interval_sec = config.downloader.poll_interval_sec
+        self.latest_files = config.downloader.latest_files
+        self.latest_minutes = config.downloader.latest_minutes
         self.start_time = config.downloader.start_time
         self.end_time = config.downloader.end_time
         self.file_tracker = file_tracker
@@ -133,7 +133,7 @@ class AwsNexradDownloader(threading.Thread):
         self._stop_event = threading.Event()
         self._known_files = set()
         self._known_files_lock = threading.Lock()
-        self._min_file_size = 1024  # bytes
+        self._min_file_size = config.downloader.min_file_size
 
         # Historical mode tracking
         self._historical_complete = threading.Event()
@@ -186,34 +186,6 @@ class AwsNexradDownloader(threading.Thread):
         """
         return self._stop_event.is_set()
 
-    def is_historical_mode(self) -> bool:
-        """Check if this downloader is running in historical mode.
-        
-        Historical mode fetches a bounded time range of NEXRAD data.
-        Realtime mode continuously fetches the latest scans within a rolling window.
-        
-        Returns
-        -------
-        bool
-            True if both `start_time` and `end_time` were specified in config.
-        
-        Notes
-        -----
-        Mode is determined at initialization and does not change during
-        execution. Check this before accessing historical-specific methods
-        like `get_historical_progress()`.
-        
-        Examples
-        --------
-        >>> downloader = AwsNexradDownloader(config_realtime, queue)
-        >>> downloader.is_historical_mode()  # False
-        
-        >>> config_hist = {..., "start_time": "2025-03-05T00:00:00Z", ...}
-        >>> downloader_hist = AwsNexradDownloader(config_hist, queue)
-        >>> downloader_hist.is_historical_mode()  # True
-        """
-        return bool(self.start_time and self.end_time)
-
     def is_historical_complete(self) -> bool:
         """Check if historical download has finished.
         
@@ -223,8 +195,8 @@ class AwsNexradDownloader(threading.Thread):
         Returns
         -------
         bool
-            True if `is_historical_mode()` is True and all available scans
-            in the start_time to end_time range have been processed.
+            True if all available scans in the start_time to end_time range
+            have been processed.
         
         Notes
         -----
@@ -293,22 +265,21 @@ class AwsNexradDownloader(threading.Thread):
         >>> downloader.start()  # Calls run() in background thread
         >>> downloader.join()   # Wait for thread to finish
         """
-        mode = "historical" if self.is_historical_mode() else "realtime"
-        logger.info("Starting %s in %s mode", self.name, mode)
+        logger.info("Starting %s in %s mode", self.name, self.config.downloader.mode)
 
         while not self.stopped():
             try:
-                self.download_task()
+                self._download_task()
             except Exception as e:
                 logger.exception("Download task failed")
 
             # Historical: exit after completion
-            if self.is_historical_mode() and self.is_historical_complete():
-                logger.info("✅ Historical download complete")
+            if self.config.downloader.mode == "historical" and self.is_historical_complete():
+                logger.info("Historical download complete")
                 break
 
             # Sleep between iterations (interruptible)
-            self._interruptible_sleep(self.sleep_interval)
+            self._interruptible_sleep(self.poll_interval_sec)
 
         logger.info("Stopped %s", self.name)
 
@@ -317,7 +288,7 @@ class AwsNexradDownloader(threading.Thread):
         for _ in range(seconds // 2):
             if self.stopped():
                 break
-            if self.is_historical_mode() and self.is_historical_complete():
+            if self.config.downloader.mode == "historical" and self.is_historical_complete():
                 break
             self._sleep(2)
 
@@ -326,7 +297,7 @@ class AwsNexradDownloader(threading.Thread):
     # Download task - dispatches to realtime or historical
     # ========================================================================
 
-    def download_task(self) -> list:
+    def _download_task(self) -> list:
         """Execute a single download iteration (realtime or historical).
         
         Dispatches to appropriate download strategy based on mode:
@@ -350,14 +321,8 @@ class AwsNexradDownloader(threading.Thread):
         - All queued files (new or existing) are put in result_queue
         - In historical mode: after one complete iteration, completion
           is marked (but loop continues to allow processing time)
-        
-        Examples
-        --------
-        >>> downloader = AwsNexradDownloader(config, queue)
-        >>> new_files = downloader.download_task()
-        >>> print(f"Downloaded {len(new_files)} new files")
         """
-        if self.is_historical_mode():
+        if self.config.downloader.mode == "historical":
             return self._download_historical()
         else:
             return self._download_realtime()
@@ -366,6 +331,8 @@ class AwsNexradDownloader(threading.Thread):
         """Download files for historical time range."""
         start, end = self._parse_time_range()
         logger.info("Historical: %s to %s", start, end)
+
+        self._check_radar_available(start, end)
 
         scans = self._fetch_scans(start, end)
         if not scans:
@@ -377,19 +344,19 @@ class AwsNexradDownloader(threading.Thread):
 
     def _download_realtime(self) -> list:
         """Download latest files for realtime mode."""
-
-        # in _download_realtime
         end = self._clock()
-        start = end - timedelta(minutes=self.minutes)
+        start = end - timedelta(minutes=self.latest_minutes)
 
-        logger.info("Realtime: last %d min (%s to %s)", self.minutes, start, end)
+        logger.info("Realtime: last %d min (%s to %s)", self.latest_minutes, start, end)
+
+        self._check_radar_available(end, end)
 
         scans = self._fetch_scans(start, end)
         if not scans:
             return []
 
         # Keep only latest N
-        scans = scans[-self.latest_n :]
+        scans = scans[-self.latest_files :]
         logger.info("Keeping latest %d scans", len(scans))
 
         return self._process_scans(scans)
@@ -418,6 +385,54 @@ class AwsNexradDownloader(threading.Thread):
         except Exception as e:
             logger.error("Failed to fetch scans: %s", e)
             return []
+
+    # ========================================================================
+    # Radar availability helpers
+    # ========================================================================
+
+    def _check_radar_available(self, start: datetime, end: datetime) -> None:
+        """Check radar availability and log warnings (best-effort).
+        
+        Checks if radar is listed in AWS inventory for the given date range.
+        This is informational only — it does not block downloads.
+        
+        For a single date (start == end): checks that date.
+        For a date range: checks each day, warns only if explicitly not found on any day.
+        
+        Uses `self.conn.get_avail_radars(year, month, day)` from NexradAwsInterface.
+        Exceptions are silently ignored (inventory may be temporarily unavailable).
+        Only warns if we successfully checked and radar is explicitly not present.
+        """
+        current = start.date()
+        end_date = end.date()
+        found_on_any_day = False
+        all_checks_failed = True  # Track if all checks failed (don't warn in that case)
+
+        while current <= end_date:
+            dt = datetime(current.year, current.month, current.day, tzinfo=timezone.utc)
+            y = dt.strftime("%Y")
+            m = dt.strftime("%m")
+            d = dt.strftime("%d")
+            try:
+                available = self.conn.get_avail_radars(y, m, d)
+                all_checks_failed = False  # At least one check succeeded
+                if self.radar_id in available:
+                    found_on_any_day = True
+                    break
+            except Exception as e:
+                logger.debug("Availability check failed for %s: %s", dt, e)
+            current = current + timedelta(days=1)
+
+        # Warn ONLY if we successfully checked and radar was explicitly not found
+        # Don't warn if all checks failed (inventory temporarily unavailable)
+        if not found_on_any_day and not all_checks_failed:
+            logger.warning(
+                "⚠️ Radar %s not found in AWS for %s - %s."
+                " Downloader will continue polling for scans.",
+                self.radar_id,
+                start.date(),
+                end.date(),
+            )
 
     def _process_scans(self, scans: list) -> list:
         """Process list of scans: download if needed, queue only if file exists."""
@@ -461,7 +476,7 @@ class AwsNexradDownloader(threading.Thread):
         )
 
         # Mark historical complete when all scans have been attempted
-        if self.is_historical_mode():
+        if self.config.downloader.mode == "historical":
             self._processed_scans = queued
             if processed >= len(scans):
                 self._historical_complete.set()
@@ -500,7 +515,7 @@ class AwsNexradDownloader(threading.Thread):
                 temp_file = Path(success[0].filepath)
                 if temp_file.exists():
                     temp_file.rename(local_path)
-                    logger.info("✓ Downloaded: %s", local_path.name)
+                    logger.info("Downloaded: %s", local_path.name)
                     return True
 
             return False

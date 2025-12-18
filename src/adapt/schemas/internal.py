@@ -23,13 +23,15 @@ class InternalReaderConfig(AdaptBaseModel):
 
 class InternalDownloaderConfig(AdaptBaseModel):
     """Runtime downloader configuration."""
-    radar_id: Optional[str]
-    output_dir: Optional[str]
-    latest_n: int
-    minutes: int
-    sleep_interval: int
+    mode: Literal["realtime", "historical"]
+    radar_id: str
+    output_dir: str
+    latest_files: int
+    latest_minutes: int
+    poll_interval_sec: int
     start_time: Optional[str]
     end_time: Optional[str]
+    min_file_size: int
 
 
 class InternalRegridderConfig(AdaptBaseModel):
@@ -128,6 +130,13 @@ class InternalLoggingConfig(AdaptBaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
+class InternalProcessorConfig(AdaptBaseModel):
+    """Runtime processor configuration."""
+    max_history: int = Field(default=2, ge=2, le=10)  # Frame history for optical flow
+    min_file_size: int = Field(default=5000, ge=1000)  # Minimum file size in bytes
+    db_filename_pattern: str = Field(default="{radar_id}_cells_statistics.db")  # Database filename pattern
+
+
 # =============================================================================
 # Main InternalConfig
 # =============================================================================
@@ -158,6 +167,7 @@ class InternalConfig(AdaptBaseModel):
     """
     
     mode: Literal["realtime", "historical"]
+    base_dir: str
     reader: InternalReaderConfig
     downloader: InternalDownloaderConfig
     regridder: InternalRegridderConfig
@@ -168,6 +178,7 @@ class InternalConfig(AdaptBaseModel):
     visualization: InternalVisualizationConfig
     output: InternalOutputConfig
     logging: InternalLoggingConfig
+    processor: InternalProcessorConfig = Field(default_factory=InternalProcessorConfig)
     
     model_config = ConfigDict(
         extra='forbid',

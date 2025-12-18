@@ -16,6 +16,6 @@ def test_output_contract(simple_2d_ds, internal_config):
 
     assert da.dims == ("y", "x")
     assert da.dtype == np.int32
-    assert "threshold_dbz" in da.attrs
+    assert "threshold" in da.attrs
     assert "z_level_m" in da.attrs
     assert da.attrs["method"] == "threshold"

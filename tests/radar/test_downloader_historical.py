@@ -24,7 +24,7 @@ def test_historical_mode_completes(tmp_path, fake_scan, fake_aws_conn, make_conf
         sleeper=lambda _: None,
     )
 
-    downloads = d.download_task()
+    downloads = d._download_task()
 
     assert d.is_historical_complete()
     processed, expected = d.get_historical_progress()
