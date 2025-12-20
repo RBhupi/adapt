@@ -28,6 +28,9 @@
 4. **Run the pipeline:**
    ```sh
    python scripts/run_nexrad_pipeline.py scripts/user_config.py
-   ```
+
+```
+
+[![codecov](https://codecov.io/gh/RBhupi/adapt/branch/main/graph/badge.svg)](https://codecov.io/gh/RBhupi/adapt)
 
 
