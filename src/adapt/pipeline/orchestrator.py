@@ -1,7 +1,9 @@
 """Multi-threaded pipeline orchestration.
 
-Coordinates downloader, processor, and plotter threads with queue-based
+Coordinates downloader and processor threads with queue-based
 inter-thread communication. Manages lifecycle, monitoring, and graceful shutdown.
+
+NOTE: Visualization removed - pipeline produces facts only, no side effects.
 """
 
 import queue
@@ -13,7 +15,6 @@ from typing import Optional, Dict, TYPE_CHECKING
 from adapt.radar.downloader import AwsNexradDownloader
 from adapt.pipeline.processor import RadarProcessor
 from adapt.pipeline.file_tracker import FileProcessingTracker
-from adapt.visualization.plotter import PlotterThread
 
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 class PipelineOrchestrator:
     """Manages the multi-threaded radar processing pipeline.
 
-    This is the main entry point for running ``adapt``. It coordinates three
-    worker threads (downloader, processor, plotter) using queues for
+    This is the main entry point for running ``adapt``. It coordinates two
+    worker threads (downloader, processor) using queues for
     inter-thread communication. The orchestrator handles startup, monitoring,
     and graceful shutdown of the entire pipeline.
 
@@ -44,8 +45,8 @@ class PipelineOrchestrator:
        - Extract cell-level statistics
        - Persist segmentation to NetCDF and statistics to SQLite
 
-    3. **Plotter Thread**: Generates visualization PNG files from analysis
-       results (reflectivity + segmentation + projections).
+    **Visualization:** REMOVED. Pipeline produces data only; visualization
+    is an external, optional consumer via DataRepository.
 
     **Modes:**
 
@@ -64,7 +65,7 @@ class PipelineOrchestrator:
     **File Tracking:**
 
     The FileProcessingTracker SQLite database records the state of each file
-    (downloaded, regridded, analyzed, plotted, or failed). This enables:
+    (downloaded, regridded, analyzed, or failed). This enables:
     - Resumable processing (restart without reprocessing completed files)
     - Progress tracking
     - Failure recovery and debugging
@@ -78,14 +79,10 @@ class PipelineOrchestrator:
 
         from adapt.pipeline.orchestrator import PipelineOrchestrator
         
-        config = {
-            "mode": "realtime",
-            "downloader": {"radar_id": "KDIX", ...},
-            "output_dirs": {...},
-            ...
-        }
+        config = {...}  # InternalConfig
+        output_dirs = {...}
         
-        orch = PipelineOrchestrator(config)
+        orch = PipelineOrchestrator(config, output_dirs)
         orch.start(max_runtime=60)  # Run for 60 minutes then stop
     """
 
@@ -118,12 +115,10 @@ class PipelineOrchestrator:
 
         # Queues for inter-thread communication
         self.downloader_queue = queue.Queue(maxsize=max_queue_size)
-        self.plotter_queue = queue.Queue(maxsize=50)
 
         # Threads (created in start())
         self.downloader = None
         self.processor = None
-        self.plotter = None
 
         # File tracking (initialized in _setup_logging)
         self.tracker = None
@@ -253,23 +248,10 @@ class PipelineOrchestrator:
             input_queue=self.downloader_queue,
             config=self.config,
             output_dirs=self.output_dirs,
-            output_queue=self.plotter_queue,
             file_tracker=self.tracker,
         )
         self.processor.start()
         logger.info("Processor started")
-
-        # Start Plotter thread
-        logger.info("Starting Plotter...")
-        self.plotter = PlotterThread(
-            input_queue=self.plotter_queue,
-            output_dirs=self.output_dirs,
-            config=self.config,
-            file_tracker=self.tracker,
-            name="RadarPlotter"
-        )
-        self.plotter.start()
-        logger.info("Plotter started")
 
         mode = self.config.mode
         logger.info("Pipeline running in %s mode. Press Ctrl+C to stop.", mode.upper())
@@ -294,13 +276,9 @@ class PipelineOrchestrator:
             if not self.processor.is_alive():
                 logger.critical("Processor thread died unexpectedly. Exiting.")
                 break
-
+            # TODO: Consider restarting threads instead of exiting?
             if not self.downloader.is_alive():
                 logger.critical("Downloader thread died unexpectedly. Exiting.")
-                break
-            
-            if not self.plotter.is_alive():
-                logger.critical("Plotter thread died unexpectedly. Exiting.")
                 break
 
             # 2. Mode-specific exit conditions
@@ -341,23 +319,16 @@ class PipelineOrchestrator:
         if self.downloader.is_alive():
             logger.warning("Downloader thread did not stop cleanly")
 
-        # Wait for queues to drain
+        # Wait for queue to drain
         self._drain_queue(self.downloader_queue, "processor")
-        self._drain_queue(self.plotter_queue, "plotter")
 
-        # Now stop processor and plotter threads
-        logger.info("Stopping processor and plotter threads...")
+        # Now stop processor thread
+        logger.info("Stopping processor thread...")
         if self.processor and self.processor.is_alive():
             self.processor.stop()
             self.processor.join(timeout=10)
             if self.processor.is_alive():
                 logger.warning("Processor thread did not stop cleanly")
-        
-        if self.plotter and self.plotter.is_alive():
-            self.plotter.stop()
-            self.plotter.join(timeout=10)
-            if self.plotter.is_alive():
-                logger.warning("Plotter thread did not stop cleanly")
 
         logger.info("Historical mode complete")
         return True
@@ -418,8 +389,7 @@ class PipelineOrchestrator:
 
         # Stop threads
         for name, thread in [("Downloader", self.downloader),
-                              ("Processor", self.processor),
-                              ("Plotter", self.plotter)]:
+                              ("Processor", self.processor)]:
             if thread and thread.is_alive():
                 logger.info("Stopping %s...", name)
                 thread.stop()
@@ -460,11 +430,9 @@ class PipelineOrchestrator:
             hist_status = f" [{processed}/{expected}]"
 
         logger.info(
-            "Status: D=%s P=%s L=%s Q=%d PQ=%d%s",
+            "Status: D=%s P=%s Q=%d%s",
             "UP" if self.downloader and self.downloader.is_alive() else "DOWN",
             "UP" if self.processor and self.processor.is_alive() else "DOWN",
-            "UP" if self.plotter and self.plotter.is_alive() else "DOWN",
             self.downloader_queue.qsize(),
-            self.plotter_queue.qsize(),
             hist_status
         )

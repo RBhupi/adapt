@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """``Adapt`` NEXRAD Radar Processing Pipeline Runner.
 
+THIN WRAPPER around adapt.cli.run_nexrad.run_nexrad_pipeline().
+All business logic lives in src/adapt/cli/ - this script only parses arguments.
+
 Usage:
     python scripts/run_nexrad_pipeline.py scripts/user_config.py
     python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KHTX
@@ -13,39 +16,13 @@ Author: Bhupendra Raut
 
 import sys
 import argparse
-import importlib.util
 from pathlib import Path
 
 # Add src to path
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root / "src"))
 
-from adapt.setup_directories import setup_output_directories
-from adapt.pipeline.orchestrator import PipelineOrchestrator
-from adapt.schemas import resolve_config, ParamConfig, UserConfig, CLIConfig
-
-
-def load_user_config_dict(config_path: str) -> dict:
-    """Load user config dict from Python file.
-    
-    Returns the raw dict before Pydantic validation.
-    """
-    path = Path(config_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Config not found: {path}")
-    
-    spec = importlib.util.spec_from_file_location("config_module", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    
-    # Find CONFIG dict
-    for name in dir(module):
-        if name.startswith('CONFIG'):
-            obj = getattr(module, name)
-            if isinstance(obj, dict):
-                return obj
-    
-    raise ValueError(f"No CONFIG dict found in {path}")
+from adapt.cli import run_nexrad_pipeline
 
 
 def main():
@@ -61,64 +38,24 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
     
-    # Load configurations
-    param_cfg = ParamConfig()  # Expert defaults
+    # Build CLI args dict
+    cli_args = {
+        "radar_id": args.radar_id,
+        "mode": args.mode,
+        "start_time": args.start_time,
+        "end_time": args.end_time,
+        "base_dir": args.base_dir,
+        "log_level": "DEBUG" if args.verbose else None,
+    }
     
-    # Load user config from file (pass raw dict directly to UserConfig)
-    user_cfg_dict = load_user_config_dict(args.config)
-    # UserConfig performs normalization/validation internally (including
-    # legacy uppercase keys). Do NOT mutate the resulting object.
-    user_cfg = UserConfig.model_validate(user_cfg_dict)
-    
-    # Create CLI config from command-line args (CLIConfig owns overrides)
-    cli_cfg = CLIConfig.model_validate({
-        k: v
-        for k, v in {
-            "radar_id": args.radar_id,
-            "mode": args.mode,
-            "start_time": args.start_time,
-            "end_time": args.end_time,
-            "base_dir": args.base_dir,
-            "log_level": "DEBUG" if args.verbose else None,
-        }.items()
-        if v is not None
-    })
-    
-    # Resolve to internal config (Param < User < CLI)
-    config = resolve_config(param_cfg, user_cfg, cli_cfg)
-    
-    # Clean output directories if --rerun specified
-    if args.rerun:
-        import shutil
-        base_dir_path = Path(config.base_dir)
-        if base_dir_path.exists():
-            print(f"Cleaning output directory: {base_dir_path}")
-            shutil.rmtree(base_dir_path)
-            print("Output directory cleaned")
-    
-    # Setup output directories
-    output_dirs = setup_output_directories(config.base_dir)
-    
-    # Print summary
-    print(f"\n{'='*60}")
-    print("ADAPT Radar Processing Pipeline")
-    print('='*60)
-    print(f"Config: {args.config}")
-    print(f"Radar:  {config.downloader.radar_id}")
-    print(f"Mode:   {config.mode}")
-    print(f"Output: {config.base_dir}")
-    print('='*60)
-
-    if args.verbose:
-        import json
-        print("\nFull Internal Configuration:")
-        # Use model_dump_json for pretty printing, or just model_dump
-        print(json.dumps(config.model_dump(), indent=2))
-        print('='*60)
-    
-    # Run pipeline
-    orchestrator = PipelineOrchestrator(config, output_dirs)
-    orchestrator.start(max_runtime=args.max_runtime)
+    # Call core pipeline runner (all logic is there)
+    run_nexrad_pipeline(
+        user_config_path=args.config,
+        cli_args=cli_args,
+        max_runtime=args.max_runtime,
+        rerun=args.rerun,
+        verbose=args.verbose
+    )
 
 
 if __name__ == "__main__":
