@@ -19,7 +19,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- Micromamba setup ---
+      - name: Debug | initial workspace state
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          pwd
+          ls -al
+
       - name: Set up micromamba
         uses: mamba-org/setup-micromamba@v1
         with:
@@ -31,37 +36,51 @@ jobs:
               - conda-forge
             channel_priority: strict
 
-
-
-      # --- Install package in editable mode ---
-      - name: Install Adapt (dev mode)
+      - name: Debug | micromamba environment
         shell: bash -l {0}
         run: |
+          echo "Python:"
+          python --version
+          echo "Pip:"
+          pip --version
+          echo "Installed packages (short):"
+          pip list | head -n 20
+
+      - name: Install package (dev mode)
+        shell: bash -l {0}
+        run: |
+          echo "Installing Adapt in editable mode"
           pip install --upgrade pip
           pip install -e .[dev]
 
-      # --- Run tests ---
+      - name: Debug | files before tests
+        run: |
+          echo "Files before tests:"
+          ls -al
+          echo "Git status:"
+          git status --porcelain || true
 
-      - name: Show working directory before tests
-        run: pwd
-
-      - name: List files before tests
-        run: ls -al
-
-      - name: Run test suite
+      - name: Run test suite with coverage
         shell: bash -l {0}
         run: |
-          pytest -m "not integration" --cov=src/adapt
+          echo "Running pytest with coverage"
+          pytest -m "not integration" \
+            --cov=src/adapt \
+            --cov-report=term \
+            --cov-report=xml
 
-      - name: List files after tests
-        run: ls -al
-
-      # --- Upload coverage ---
-      - name: List files for coverage debug
-        run: ls -l
+      - name: Debug | files after tests
+        run: |
+          echo "Files after tests:"
+          ls -al
+          echo "Coverage files:"
+          ls -l coverage.xml .coverage 2>/dev/null || true
+          echo "Disk usage:"
+          du -sh .
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python-version }}
-          path: .coverage
+          path: ${{ github.workspace }}/coverage.xml
+
