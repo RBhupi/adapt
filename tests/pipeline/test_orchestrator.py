@@ -69,9 +69,9 @@ def test_orchestrator_tracker_database_path(pipeline_config, pipeline_output_dir
     orch._setup_logging()
 
     assert orch.tracker is not None
-    # Database should be in analysis directory and named with radar id
+    # Database should be in RADAR_ID/analysis/ directory
     radar_id = pipeline_config.downloader.radar_id
-    expected_db = pipeline_output_dirs["analysis"] / f"{radar_id}_file_tracker.db"
+    expected_db = pipeline_output_dirs["base"] / radar_id / "analysis" / f"{radar_id}_file_tracker.db"
     assert expected_db.exists()
 
 

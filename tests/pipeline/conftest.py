@@ -38,8 +38,18 @@ def pipeline_config(temp_dir) -> InternalConfig:
 
 @pytest.fixture
 def pipeline_output_dirs(temp_dir):
-    """Output directories for pipeline tests."""
-    return setup_output_directories(temp_dir)
+    """Output directories for pipeline tests.
+
+    Returns dict with 'base' and 'logs' from setup_output_directories,
+    plus backward-compatible keys that point to base for legacy tests.
+    """
+    dirs = setup_output_directories(temp_dir)
+    # Add legacy keys for backward compatibility in tests
+    dirs["nexrad"] = dirs["base"]
+    dirs["gridnc"] = dirs["base"]
+    dirs["analysis"] = dirs["base"]
+    dirs["plots"] = dirs["base"]
+    return dirs
 
 
 # made for processor tests

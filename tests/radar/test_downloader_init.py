@@ -79,14 +79,34 @@ def test_file_exists_true(tmp_path, radar_config, radar_output_dirs):
 
 from datetime import datetime
 def test_get_local_path(make_config, radar_output_dirs):
-    """Downloader generates correct local file paths."""
+    """Downloader generates correct local file paths with new structure."""
     class FakeScan:
         key = "foo/bar/testfile"
         scan_time = datetime(2024, 1, 1)
 
     from adapt.schemas.user import UserDownloaderConfig
     config = make_config(downloader=UserDownloaderConfig(radar_id="KDIX"))
-    d = AwsNexradDownloader(config, radar_output_dirs["nexrad"])
+    # Use output_dirs for new path structure (RADAR_ID/nexrad/YYYYMMDD/)
+    d = AwsNexradDownloader(config, output_dirs=radar_output_dirs)
+
+    path = d._get_local_path(FakeScan())
+    assert "20240101" in str(path)
+    assert "KDIX" in str(path)
+    assert path.name == "testfile"
+    # New structure: base/KDIX/nexrad/20240101/testfile
+    assert "KDIX/nexrad/20240101" in str(path) or "KDIX\\nexrad\\20240101" in str(path)
+
+
+def test_get_local_path_legacy(make_config, radar_output_dirs):
+    """Downloader generates correct local file paths with legacy output_dir."""
+    class FakeScan:
+        key = "foo/bar/testfile"
+        scan_time = datetime(2024, 1, 1)
+
+    from adapt.schemas.user import UserDownloaderConfig
+    config = make_config(downloader=UserDownloaderConfig(radar_id="KDIX"))
+    # Use legacy output_dir parameter
+    d = AwsNexradDownloader(config, output_dir=radar_output_dirs["nexrad"])
 
     path = d._get_local_path(FakeScan())
     assert "20240101" in str(path)

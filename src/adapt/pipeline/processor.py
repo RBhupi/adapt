@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, TYPE_CHECKING
 import threading
 import queue
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 import pandas as pd
@@ -31,6 +31,7 @@ from adapt.contracts import (
     assert_projected,
     assert_analysis_output,
 )
+from adapt.core import DataRepository, ProductType
 
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
@@ -117,6 +118,7 @@ class RadarProcessor(threading.Thread):
                  output_dirs: Dict[str, Path],
                  output_queue: queue.Queue = None,
                  file_tracker = None,
+                 repository: Optional[DataRepository] = None,
                  name: str = "RadarProcessor"):
         """Initialize processor with validated configuration.
 
@@ -164,6 +166,7 @@ class RadarProcessor(threading.Thread):
         self.output_dirs = output_dirs
         self.output_queue = output_queue  # For plotter thread
         self.file_tracker = file_tracker
+        self.repository = repository
         self._stop_event = threading.Event()
 
         # Initialize processing modules
@@ -178,10 +181,22 @@ class RadarProcessor(threading.Thread):
         self.max_history = self.config.processor.max_history
 
         # SQLite database connection
-        self.db_path = self._get_db_path()
-        self.db_conn = None
+        # If repository is provided, use it for data storage
+        # Otherwise, fall back to legacy direct database access
         self.output_lock = threading.Lock()
-        self._init_database()
+        self.cells_db_artifact_id: Optional[str] = None
+
+        if self.repository:
+            # Repository handles database creation and management
+            self.db_path = None
+            self.db_conn = None
+            self.db_initialized = False
+            logger.info("Processor using DataRepository for data storage")
+        else:
+            # Legacy mode: direct database access
+            self.db_path = self._get_db_path()
+            self.db_conn = None
+            self._init_database()
 
     def _get_db_path(self) -> Path:
         """Get SQLite database path at radar-level (persists across runs/dates).
@@ -189,13 +204,14 @@ class RadarProcessor(threading.Thread):
         Database is stored at: analysis/{radar_id}_cells_statistics.db
         This ensures all cells from a pipeline run (even across multiple dates)
         go into the same database.
-        
+
         radar_id and output_dir are required fields from InternalConfig.downloader.
         """
         radar_id = self.config.downloader.radar_id  # Required field, no fallback
-        analysis_dir = Path(self.output_dirs["analysis"])
+        # New structure: base/RADAR_ID/analysis/
+        analysis_dir = Path(self.output_dirs["base"]) / radar_id / "analysis"
         analysis_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Use filename pattern from config
         db_filename = self.config.processor.db_filename_pattern.format(radar_id=radar_id)
         return analysis_dir / db_filename
@@ -480,8 +496,30 @@ class RadarProcessor(threading.Thread):
         if nc_full_path and nc_full_path.exists() and nc_full_path.stat().st_size > 1000:
             try:
                 import pyart
-                grid = pyart.io.read_grid(str(nc_full_path))
-                ds = grid.to_xarray()
+                import warnings
+                import os
+                import sys
+
+                # Suppress HDF5 diagnostic messages that appear on stderr
+                # HDF5 C library prints directly to stderr when checking file accessibility
+                # We need to redirect stderr at the file descriptor level
+                sys.stderr.flush()
+                old_stderr_fd = os.dup(2)
+                devnull_fd = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull_fd, 2)
+
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        grid = pyart.io.read_grid(str(nc_full_path))
+                        ds = grid.to_xarray()
+                finally:
+                    # Restore stderr
+                    sys.stderr.flush()
+                    os.dup2(old_stderr_fd, 2)
+                    os.close(devnull_fd)
+                    os.close(old_stderr_fd)
+
                 logger.debug("Loaded existing NetCDF: %s", nc_full_path.name)
             except Exception as e:
                 logger.warning("Failed to load existing NetCDF %s: %s", nc_full_path.name, e)
@@ -567,10 +605,10 @@ class RadarProcessor(threading.Thread):
         """Analyze cells (now has projection info), update tracker, insert into SQLite DB."""
         z_level = self.config.global_.z_level
         df_cells = self.analyzer.extract(ds_2d, z_level=z_level)
-        
+
         # Contract: analysis output must meet requirements
         assert_analysis_output(df_cells)
-        
+
         file_id = Path(filepath).stem
         if df_cells.empty:
             logger.debug("No cells detected in: %s", Path(filepath).name)
@@ -584,17 +622,33 @@ class RadarProcessor(threading.Thread):
 
         logger.debug("Analyzed: %d cells with projection info", len(df_cells))
         self._log_cell_statistics(df_cells)
-        
+
         with self.output_lock:
-            if not self.db_initialized:
-                self._create_cells_table(df_cells)
-                self.db_initialized = True
+            if self.repository:
+                # Use DataRepository for storage
+                if self.cells_db_artifact_id is None:
+                    self.cells_db_artifact_id = self.repository.get_or_create_cells_db(
+                        scan_time=scan_time or datetime.now(timezone.utc),
+                        producer="processor"
+                    )
+                    self.db_initialized = True
+
+                self.repository.write_sqlite_table(
+                    df=df_cells,
+                    table_name='cells',
+                    artifact_id=self.cells_db_artifact_id
+                )
             else:
-                # Align DataFrame to existing table schema (handles files with different variables)
-                df_cells = self._align_dataframe_to_schema(df_cells)
-            # Append data (schema already exists)
-            df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
-        
+                # Legacy mode: direct database access
+                if not self.db_initialized:
+                    self._create_cells_table(df_cells)
+                    self.db_initialized = True
+                else:
+                    # Align DataFrame to existing table schema (handles files with different variables)
+                    df_cells = self._align_dataframe_to_schema(df_cells)
+                # Append data (schema already exists)
+                df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
+
         logger.info("Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
         tracker = self.file_tracker
         if tracker:
@@ -656,7 +710,12 @@ class RadarProcessor(threading.Thread):
                 return pd.DataFrame()
 
             try:
-                return pd.read_sql("SELECT * FROM cells", self.db_conn)
+                if self.repository and self.cells_db_artifact_id:
+                    return self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
+                elif self.db_conn:
+                    return pd.read_sql("SELECT * FROM cells", self.db_conn)
+                else:
+                    return pd.DataFrame()
             except Exception as e:
                 logger.warning("Failed to read from database: %s", e)
                 return pd.DataFrame()
@@ -674,26 +733,49 @@ class RadarProcessor(threading.Thread):
             Output Parquet filepath. If None, uses:
             `{output_dirs['analysis']}/{radar_id}_cells_statistics.parquet`
         """
-        if filepath is None:
-            analysis_dir = Path(self.output_dirs["analysis"])
-            filepath = analysis_dir / f"{self.config.downloader.radar_id}_cells_statistics.parquet"
-
         try:
-            filepath = Path(filepath)
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-
             with self.output_lock:
-                cursor = self.db_conn.execute("SELECT COUNT(*) FROM cells")
-                count = cursor.fetchone()[0]
+                if self.repository and self.cells_db_artifact_id:
+                    # Use DataRepository for storage
+                    try:
+                        df = self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
+                        if len(df) > 0:
+                            self.repository.write_parquet(
+                                df=df,
+                                product_type=ProductType.CELLS_PARQUET,
+                                scan_time=datetime.now(timezone.utc),
+                                producer="processor",
+                                parent_ids=[self.cells_db_artifact_id],
+                                metadata={"row_count": len(df)}
+                            )
+                            logger.info("Exported %d rows to Parquet via DataRepository", len(df))
+                        else:
+                            logger.warning("No results to export")
+                    except Exception as e:
+                        logger.warning("Failed to export via DataRepository: %s", e)
+                elif self.db_conn:
+                    # Legacy mode: direct database access
+                    if filepath is None:
+                        radar_id = self.config.downloader.radar_id
+                        analysis_dir = Path(self.output_dirs["base"]) / radar_id / "analysis"
+                        filepath = analysis_dir / f"{radar_id}_cells_statistics.parquet"
 
-                if count > 0:
-                    df = pd.read_sql("SELECT * FROM cells", self.db_conn)
-                    df.to_parquet(filepath, engine='pyarrow',
-                                  compression=self.config.output.compression,
-                                  index=False)
-                    logger.info("Exported %d rows to: %s", count, filepath)
+                    filepath = Path(filepath)
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+                    cursor = self.db_conn.execute("SELECT COUNT(*) FROM cells")
+                    count = cursor.fetchone()[0]
+
+                    if count > 0:
+                        df = pd.read_sql("SELECT * FROM cells", self.db_conn)
+                        df.to_parquet(filepath, engine='pyarrow',
+                                      compression=self.config.output.compression,
+                                      index=False)
+                        logger.info("Exported %d rows to: %s", count, filepath)
+                    else:
+                        logger.warning("No results to export")
                 else:
-                    logger.warning("No results to export")
+                    logger.warning("No database connection available for export")
 
         except Exception as e:
             logger.exception("Failed to export results")
@@ -812,20 +894,8 @@ class RadarProcessor(threading.Thread):
         """Save analysis results to NetCDF for visualization.
         """
         try:
-            from adapt.setup_directories import get_analysis_path
             radar_id = self.config.downloader.radar_id
-
-            # Create output path
             filename_stem = Path(filepath).stem
-            seg_nc_filename = f"{filename_stem}_analysis.nc"
-            seg_nc_path = get_analysis_path(
-                self.output_dirs,
-                radar_id=radar_id,
-                analysis_type="netcdf",
-                timestamp=scan_time,
-                filename=seg_nc_filename
-            )
-            seg_nc_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Add metadata
             ds.attrs.update({
@@ -834,15 +904,46 @@ class RadarProcessor(threading.Thread):
                 "description": "Radar analysis with segmentation and projections"
             })
 
-            # Save to NetCDF
-            ds.to_netcdf(seg_nc_path, mode='w', engine='netcdf4', format='NETCDF4', compute=True)
-            ds.close()
+            if self.repository:
+                # Use DataRepository for storage
+                artifact_id = self.repository.write_netcdf(
+                    ds=ds,
+                    product_type=ProductType.ANALYSIS_NC,
+                    scan_time=scan_time or datetime.now(timezone.utc),
+                    producer="processor",
+                    parent_ids=[],
+                    metadata={"components": list(ds.data_vars.keys())},
+                    filename_stem=filename_stem
+                )
+                artifact = self.repository.get_artifact(artifact_id)
+                seg_nc_path = Path(artifact['file_path'])
 
-            # Log what was saved
-            components = list(ds.data_vars.keys())
-            logger.info(f"Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
+                # Log what was saved
+                components = list(ds.data_vars.keys())
+                logger.info(f"Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
+                return str(seg_nc_path)
+            else:
+                # Legacy mode: direct file access
+                from adapt.setup_directories import get_analysis_path
 
-            return str(seg_nc_path)
+                seg_nc_filename = f"{filename_stem}_analysis.nc"
+                seg_nc_path = get_analysis_path(
+                    self.output_dirs,
+                    radar_id=radar_id,
+                    analysis_type="netcdf",
+                    timestamp=scan_time,
+                    filename=seg_nc_filename
+                )
+                seg_nc_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Save to NetCDF
+                ds.to_netcdf(seg_nc_path, mode='w', engine='netcdf4', format='NETCDF4', compute=True)
+                ds.close()
+
+                # Log what was saved
+                components = list(ds.data_vars.keys())
+                logger.info(f"Analysis saved: {seg_nc_path.name} [{', '.join(components)}]")
+                return str(seg_nc_path)
 
         except Exception as e:
             logger.warning(f"Could not save segmentation NetCDF: {e}")

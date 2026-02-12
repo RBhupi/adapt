@@ -14,6 +14,7 @@ from adapt.radar.downloader import AwsNexradDownloader
 from adapt.pipeline.processor import RadarProcessor
 from adapt.pipeline.file_tracker import FileProcessingTracker
 from adapt.visualization.plotter import PlotterThread
+from adapt.core import DataRepository
 
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
@@ -128,6 +129,10 @@ class PipelineOrchestrator:
         # File tracking (initialized in _setup_logging)
         self.tracker = None
 
+        # DataRepository (initialized in start())
+        self.run_id = DataRepository.generate_run_id()
+        self.repository: Optional[DataRepository] = None
+
         # Lifecycle state
         self._stop_event = False
         self._start_time = None
@@ -173,8 +178,10 @@ class PipelineOrchestrator:
 
         logger.info("Logging: level=%s, file=%s", log_level, log_path)
 
-        # Initialize file tracker
-        tracker_path = Path(self.output_dirs["analysis"]) / f"{radar_id}_file_tracker.db"
+        # Initialize file tracker (stored in RADAR_ID/analysis/)
+        tracker_dir = Path(self.output_dirs["base"]) / radar_id / "analysis"
+        tracker_dir.mkdir(parents=True, exist_ok=True)
+        tracker_path = tracker_dir / f"{radar_id}_file_tracker.db"
         self.tracker = FileProcessingTracker(tracker_path)
         logger.info("File tracker: %s", tracker_path)
 
@@ -224,8 +231,18 @@ class PipelineOrchestrator:
         """
         self._setup_logging()
 
+        # Initialize DataRepository
+        radar_id = self.config.downloader.radar_id
+        self.repository = DataRepository(
+            run_id=self.run_id,
+            base_dir=self.output_dirs["base"],
+            radar_id=radar_id,
+            config=self.config
+        )
+
         logger.info("=" * 60)
         logger.info("Starting Radar Processing Pipeline")
+        logger.info("Run ID: %s", self.run_id)
         logger.info("=" * 60)
 
         self._start_time = time.time()
@@ -240,7 +257,7 @@ class PipelineOrchestrator:
         logger.info("Starting Downloader...")
         self.downloader = AwsNexradDownloader(
             config=self.config,
-            output_dir=self.output_dirs["nexrad"],
+            output_dirs=self.output_dirs,
             result_queue=self.downloader_queue,
             file_tracker=self.tracker,
         )
@@ -255,6 +272,7 @@ class PipelineOrchestrator:
             output_dirs=self.output_dirs,
             output_queue=self.plotter_queue,
             file_tracker=self.tracker,
+            repository=self.repository,
         )
         self.processor.start()
         logger.info("Processor started")
@@ -434,6 +452,12 @@ class PipelineOrchestrator:
             df = self.processor.get_results()
             logger.info("Final results: %d rows", len(df))
             self.processor.close_database()
+
+        # Finalize repository
+        if self.repository:
+            self.repository.finalize_run("completed" if not self._stop_event else "cancelled")
+            self.repository.close()
+            logger.info("DataRepository finalized: run_id=%s", self.run_id)
 
         # Summary
         elapsed = time.time() - self._start_time if self._start_time else 0
