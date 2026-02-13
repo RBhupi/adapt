@@ -1,0 +1,179 @@
+@startuml
+skinparam style strictuml
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam defaultTextAlignment center
+
+left to right direction
+
+skinparam backgroundColor #FFFFFF
+skinparam ArrowColor #4C566A
+skinparam ClassBorderColor #2E3440
+skinparam ClassBackgroundColor #ECEFF4
+
+skinparam PackageBorderColor #4C566A
+skinparam PackageBackgroundColor #E5E9F0
+
+title ADAPT Radar Processing Architecture — Control, Data & Persistence
+
+' =====================================================
+' TOP LAYER — CROSS-CUTTING CONCERNS
+' =====================================================
+
+package "Pipeline Contracts" #E06C75 {
+
+  class ContractViolation <<exception>>
+  class GridContract
+  class SegmentationContract
+  class ProjectionContract
+  class AnalysisContract
+
+}
+
+GridContract ..> ContractViolation
+SegmentationContract ..> ContractViolation
+ProjectionContract ..> ContractViolation
+AnalysisContract ..> ContractViolation
+
+
+package "Configuration (Pydantic)" #EBCB8B {
+  class ParamConfig <<schema>>
+  class UserConfig <<schema>>
+  class CLIConfig <<schema>>
+  class InternalConfig <<immutable>>
+}
+
+ParamConfig --> InternalConfig
+UserConfig --> InternalConfig
+CLIConfig --> InternalConfig
+
+
+
+package "Control & Orchestration" #81A1C1 {
+
+  class PipelineOrchestrator {
+    +start()
+    +stop()
+  }
+
+  class DownloaderThread <<thread>> {
+    +run()
+  }
+
+  class ProcessorThread <<thread>> {
+    +run()
+  }
+
+  class RuntimeLogger
+  class FileTracker
+}
+
+PipelineOrchestrator --> DownloaderThread
+PipelineOrchestrator --> ProcessorThread
+PipelineOrchestrator --> RuntimeLogger
+PipelineOrchestrator --> FileTracker
+
+
+
+' =====================================================
+' CORE DATA PLANE
+' =====================================================
+
+package "Processing Core" #A3BE8C {
+
+  class RadarProcessor {
+    +process_file()
+  }
+
+  class RadarDataLoader {
+    +load_and_regrid()
+  }
+
+  class RadarCellSegmenter {
+    +segment()
+  }
+
+  class RadarCellProjector {
+    +project()
+  }
+
+  class RadarCellAnalyzer {
+    +extract()
+  }
+
+  RadarProcessor --> RadarDataLoader
+  RadarProcessor --> RadarCellSegmenter
+  RadarProcessor --> RadarCellProjector
+  RadarProcessor --> RadarCellAnalyzer
+}
+
+ProcessorThread --> RadarProcessor
+DownloaderThread ..> ProcessorThread : file paths
+
+RadarProcessor --> GridContract
+RadarProcessor --> SegmentationContract
+RadarProcessor --> ProjectionContract
+RadarProcessor --> AnalysisContract
+
+' =====================================================
+' EXTENSIONS (PEER STAGES)
+' =====================================================
+
+package "Extensions (Optional, Peer Stages)" #D08770 {
+
+  class Tracker <<extension>> {
+    +track()
+  }
+
+  class SatelliteEnrichment <<extension>> {
+    +enrich()
+  }
+}
+
+RadarProcessor --> Tracker
+RadarProcessor --> SatelliteEnrichment
+
+' =====================================================
+' DATA BOUNDARY (PERSISTENCE)
+' =====================================================
+
+package "Data Boundary (Repository)" #B48EAD {
+
+  class DataRepository {
+    +write_variables()
+    +write_tables()
+    +read()
+  }
+
+  class NetCDFStore <<files>>
+  class SQLiteDB <<database>>
+}
+
+RadarProcessor --> DataRepository
+Tracker --> DataRepository
+SatelliteEnrichment --> DataRepository
+
+DataRepository --> NetCDFStore
+DataRepository --> SQLiteDB
+
+RadarProcessor --> FileTracker
+
+' =====================================================
+' DOWNSTREAM CONSUMERS (OUT OF SCOPE)
+' =====================================================
+
+package "Downstream Consumers" #ECEFF4 {
+
+  class VisualizationScripts
+  class JupyterNotebooks
+  class GUI
+  class ExportTools
+}
+
+VisualizationScripts --> DataRepository
+JupyterNotebooks --> DataRepository
+GUI --> DataRepository
+ExportTools --> DataRepository
+
+@enduml

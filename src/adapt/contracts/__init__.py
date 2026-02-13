@@ -11,8 +11,7 @@ Key principle:
 - Algorithms handle science edge cases
 """
 
-from adapt.contracts.failure import ContractViolation, FailurePolicy
-from adapt.contracts.base import require
+from adapt.contracts.base import ContractViolation, require
 from adapt.contracts.grid import assert_gridded
 from adapt.contracts.segmentation import assert_segmented
 from adapt.contracts.projection import assert_projected
@@ -20,7 +19,6 @@ from adapt.contracts.analysis import assert_analysis_output
 
 __all__ = [
     "ContractViolation",
-    "FailurePolicy",
     "require",
     "assert_gridded",
     "assert_segmented",

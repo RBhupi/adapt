@@ -1,9 +1,6 @@
 """Formal pipeline invariants.
 
-This file is the single source of truth for semantic guarantees between
-pipeline stages. It documents what each stage MUST produce.
-
-This is architecture, not code.
+This file documents what each stage MUST produce. This is architecture, not code.
 Use this file as a reviewer anchor and system reference.
 """
 

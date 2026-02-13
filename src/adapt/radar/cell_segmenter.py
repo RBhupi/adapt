@@ -163,11 +163,7 @@ class RadarCellSegmenter:
             Dataset attributes are preserved; cell_labels attributes
             include segmentation metadata (threshold, z-level, method, etc.).
         
-        Raises
-        ------
-        ValueError
-            If segmentation method is not recognized.
-        
+
         Notes
         -----
         - Method is determined at initialization (config["method"])
@@ -183,10 +179,7 @@ class RadarCellSegmenter:
         >>> num_cells = ds_labeled['cell_labels'].max().item()
         >>> print(f"Found {num_cells} cells in this scan")
         """
-        if self.method == "threshold":
-            return self._segment2D_threshold(ds)
-        else:
-            raise ValueError(f"Unknown segmentation method: {self.method}")
+        return self._segment2D_threshold(ds)
 
     def _segment2D_threshold(self, ds: xr.Dataset) -> xr.Dataset:
         """Apply threshold and morphology to detect cells (internal method).

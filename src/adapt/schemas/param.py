@@ -103,7 +103,7 @@ class FlowParamsConfig(AdaptBaseModel):
 
 class ProjectorConfig(AdaptBaseModel):
     """Cell projection configuration."""
-    method: str = "adapt_default"
+    method: Literal["adapt_default"] = "adapt_default"
     max_time_interval_minutes: int = Field(30, ge=1)
     max_projection_steps: int = Field(1, ge=1, le=10)  # OLD DEFAULT: was 1 not 5
     nan_fill_value: float = 0.0

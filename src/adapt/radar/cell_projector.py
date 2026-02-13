@@ -221,10 +221,7 @@ class RadarCellProjector:
         >>> vy = ds_with_motion["heading_y"]
         >>> speed = np.sqrt(vx**2 + vy**2)  # pixels/frame
         """
-        if self.method == "adapt_default":
-            return self._project_opticalflow(ds_list)
-        else:
-            raise ValueError(f"Unknown projection method: {self.method}")
+        return self._project_opticalflow(ds_list)
 
 
     def _project_opticalflow(self, ds_list):

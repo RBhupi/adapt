@@ -1,0 +1,206 @@
+digraph ADAPT {
+    rankdir=LR;
+    bgcolor="#0f1117";
+    fontname="Helvetica";
+    fontsize=12;
+
+    node [
+        shape=box,
+        style="rounded,filled",
+        fontname="Helvetica",
+        fontsize=11,
+        color="#c9d1d9",
+        fontcolor="#e6edf3"
+    ];
+
+    edge [
+        fontname="Helvetica",
+        fontsize=10,
+        color="#8b949e",
+        fontcolor="#8b949e",
+        arrowsize=0.8
+    ];
+
+    // =========================
+    // LEGEND
+    // =========================
+    subgraph cluster_legend {
+        label="Legend";
+        fontsize=12;
+        color="#30363d";
+        fontcolor="#e6edf3";
+
+        L1 [label="CLI / User Entry", fillcolor="#1f6feb"];
+        L2 [label="Pipeline Orchestration", fillcolor="#238636"];
+        L3 [label="Processor (Contract-bound)", fillcolor="#2ea043"];
+        L4 [label="Data Repository (Facts)", fillcolor="#a371f7"];
+        L5 [label="External Consumer (Viz / Analysis)", fillcolor="#d29922"];
+        L6 [label="Validation / Fail-Fast", shape=diamond, fillcolor="#da3633"];
+        L7 [label="Thread / Loop", shape=oval, fillcolor="#6e7681"];
+    }
+
+    // =========================
+    // USER / CLI
+    // =========================
+    subgraph cluster_cli {
+        label="User Interface";
+        color="#1f6feb";
+
+        CLI [label="run_nexrad_pipeline()\n(adapt.cli)", fillcolor="#1f6feb"];
+    }
+
+    // =========================
+    // ORCHESTRATION
+    // =========================
+    subgraph cluster_orch {
+        label="Pipeline Orchestration";
+        color="#238636";
+
+        Orchestrator [
+            label="PipelineOrchestrator\n.run()",
+            fillcolor="#238636"
+        ];
+
+        ContractCheck [
+            label="validate_contracts()",
+            shape=diamond,
+            fillcolor="#da3633"
+        ];
+
+        ModeLoop [
+            label="Mode Loop\n(realtime | historical)",
+            shape=oval,
+            fillcolor="#6e7681"
+        ];
+    }
+
+    // =========================
+    // PROCESSORS
+    // =========================
+    subgraph cluster_processors {
+        label="Processors (Sequential, Contract-Driven)";
+        color="#2ea043";
+
+        Source [
+            label="Source\n(Downloader / Loader)\n.process()",
+            fillcolor="#2ea043"
+        ];
+
+        Detector [
+            label="Detector\n(Cell Segmentation)\n.process()",
+            fillcolor="#2ea043"
+        ];
+
+        Projector [
+            label="Projector\n(Optical Flow)\n.process()",
+            fillcolor="#2ea043"
+        ];
+
+        Analyzer [
+            label="Analyzer\n(Cell Properties 2D)\n.process()",
+            fillcolor="#2ea043"
+        ];
+
+        Tracker [
+            label="Tracker (Extension)\n(Optional)\n.process()",
+            fillcolor="#2ea043"
+        ];
+    }
+
+    // =========================
+    // DATA ACCESS
+    // =========================
+    subgraph cluster_repo {
+        label="Data Boundary (Write Facts Only)";
+        color="#a371f7";
+
+        Repo [
+            label="DataRepository\n(write / read)",
+            fillcolor="#a371f7"
+        ];
+
+        NetCDF [
+            label="NetCDF Files\n(grids, masks, fields)",
+            shape=folder,
+            fillcolor="#a371f7"
+        ];
+
+        SQLite [
+            label="SQLite DB\n(cells, metadata)",
+            shape=folder,
+            fillcolor="#a371f7"
+        ];
+    }
+
+    // =========================
+    // VISUALIZATION / CONSUMERS
+    // =========================
+    subgraph cluster_consumers {
+        label="External Consumers (Read-Only)";
+        color="#d29922";
+
+        RealtimeViz [
+            label="RealtimeVisualizer\n(polling loop)",
+            shape=oval,
+            fillcolor="#d29922"
+        ];
+
+        HistoricalViz [
+            label="Historical Plotter\n(batch)",
+            fillcolor="#d29922"
+        ];
+
+        Notebook [
+            label="Notebook / GUI\n(Bokeh, Qt, etc.)",
+            fillcolor="#d29922"
+        ];
+    }
+
+    // =========================
+    // FLOW: CLI → ORCHESTRATOR
+    // =========================
+    CLI -> Orchestrator [label="run()"];
+
+    Orchestrator -> ContractCheck [label="register processors"];
+    ContractCheck -> Orchestrator [label="OK"];
+    ContractCheck -> Orchestrator [label="FAIL → abort", color="#da3633"];
+
+    Orchestrator -> ModeLoop [label="start loop"];
+
+    // =========================
+    // FLOW: PROCESSOR CHAIN
+    // =========================
+    ModeLoop -> Source [label="invoke"];
+    Source -> Repo [label="write(Grid2D)"];
+
+    Repo -> Detector [label="read(Grid2D)"];
+    Detector -> Repo [label="write(CellMask)"];
+
+    Repo -> Projector [label="read(CellMask)"];
+    Projector -> Repo [label="write(MotionField)"];
+
+    Repo -> Analyzer [label="read(CellMask + MotionField)"];
+    Analyzer -> Repo [label="write(CellProperties2D)"];
+
+    Repo -> Tracker [label="read(CellProperties2D)", style=dashed];
+    Tracker -> Repo [label="write(Tracks)", style=dashed];
+
+    // =========================
+    // FLOW: STORAGE
+    // =========================
+    Repo -> NetCDF [label="persist arrays"];
+    Repo -> SQLite [label="persist tables"];
+
+    // =========================
+    // FLOW: CONSUMERS
+    // =========================
+    NetCDF -> RealtimeViz [label="poll new facts"];
+    SQLite -> RealtimeViz;
+
+    NetCDF -> HistoricalViz [label="query"];
+    SQLite -> HistoricalViz;
+
+    NetCDF -> Notebook;
+    SQLite -> Notebook;
+}
+

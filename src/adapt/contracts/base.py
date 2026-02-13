@@ -1,10 +1,22 @@
 """Base contract enforcement utilities.
 
 The require() function is the single enforcement mechanism for all contracts.
-It is NOT defensive programming — it enforces semantic invariants of the pipeline.
 """
 
-from adapt.contracts.failure import ContractViolation
+
+class ContractViolation(RuntimeError):
+    """Raised when a pipeline contract is violated.
+
+    This indicates a bug in pipeline logic, not bad user input or recoverable
+    science edge cases. It means a pipeline stage did not produce the invariants
+    it promised.
+
+    Key distinction:
+    - ValueError: User/config error (handled by Pydantic)
+    - ContractViolation: Pipeline bug (programmer error)
+    - Exception: Recoverable science issues (try/except in algorithms)
+    """
+    pass
 
 
 def require(condition: bool, message: str) -> None:
