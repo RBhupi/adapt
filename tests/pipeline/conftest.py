@@ -68,3 +68,14 @@ def processor_queues():
     return queue.Queue(), queue.Queue()
 
 
+@pytest.fixture
+def test_repository(temp_dir):
+    """DataRepository for processor tests."""
+    run_id = DataRepository.generate_run_id()
+    return DataRepository(
+        run_id=run_id,
+        base_dir=temp_dir,
+        radar_id="TEST_RADAR"
+    )
+
+

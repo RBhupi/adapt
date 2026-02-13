@@ -1,14 +1,7 @@
 """ ``Adapt`` User Configuration.
 
 This is the user-facing configuration file. Modify settings here to customize
-the pipeline behavior. Advanced settings are in src/expert_config.py
-
-Usage:
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py --radar-id KHTX
-    python scripts/run_nexrad_pipeline.py scripts/user_config.py --mode historical
-
-Author: Bhupendra Raut
+the pipeline behavior. this overrides internal defaults defined in src/param_config.py
 """
 
 CONFIG = {

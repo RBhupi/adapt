@@ -49,14 +49,6 @@ class PipelineOrchestrator:
        - Persist segmentation to NetCDF and statistics to SQLite
        - Register all artifacts in DataRepository
 
-    **Plotting (External):**
-
-    Visualization is handled by PlotConsumer, a separate thread started from
-    run_nexrad_pipeline.py. PlotConsumer polls the DataRepository for new
-    analysis artifacts and generates plots independently. This architecture:
-    - Decouples visualization from processing (no queue coupling)
-    - Validates DataRepository APIs are sufficient for downstream consumers
-    - Allows processing to continue unblocked during slow plot generation
 
     **Modes:**
 
@@ -111,23 +103,15 @@ class PipelineOrchestrator:
             
         max_queue_size : int, optional
             Maximum size of inter-thread communication queues (default: 100).
-            
-            - Larger queues (200+): Higher throughput, more memory, less backpressure
-            - Smaller queues (10-30): Lower memory, stronger backpressure, risk of stalls
-            - Balance depends on your file processing speed vs download speed
         """
         self.config = config
-        # Extract output_dirs from config or setup from base_dir if not provided  
-        if config.output_dirs:
-            self.output_dirs = {k: Path(v) for k, v in config.output_dirs.items()}
-        else:
-            # Fallback for tests - setup output dirs from base_dir
-            from adapt.setup_directories import setup_output_directories
-            self.output_dirs = setup_output_directories(config.base_dir)
         self.max_queue_size = max_queue_size
 
         # Queue for downloader -> processor communication
         self.downloader_queue = queue.Queue(maxsize=max_queue_size)
+
+        # Extract output_dirs from validated config
+        self.output_dirs = {k: Path(v) for k, v in config.output_dirs.items()}
 
         # Threads (created in start())
         self.downloader = None
@@ -137,7 +121,7 @@ class PipelineOrchestrator:
         self.tracker = None
 
         # DataRepository (initialized in start()) - use run_id from config or generate
-        self.run_id = config.run_id if config.run_id else DataRepository.generate_run_id()
+        self.run_id = config.run_id
         self.repository: Optional[DataRepository] = None
 
         # Lifecycle state

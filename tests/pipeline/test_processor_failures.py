@@ -3,19 +3,19 @@ from pathlib import Path
 import queue
 import pytest
 
-def test_process_missing_file(pipeline_config, pipeline_output_dirs):
+def test_process_missing_file(pipeline_config, pipeline_output_dirs, test_repository):
     """Processor handles missing file gracefully."""
     q = queue.Queue()
-    proc = RadarProcessor(q, pipeline_config, pipeline_output_dirs)
+    proc = RadarProcessor(q, pipeline_config, pipeline_output_dirs, repository=test_repository)
 
     ok = proc.process_file("/does/not/exist")
     assert ok is False
 
 
-def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
+def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs, test_repository):
     """Processor handles None return from loader."""
     in_q, _ = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, repository=test_repository)
 
     monkeypatch.setattr(
         proc.loader,
@@ -27,10 +27,10 @@ def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pip
     assert ok is False
 
 
-def test_processor_handles_loader_exception(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
+def test_processor_handles_loader_exception(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs, test_repository):
     """Processor handles loader exceptions gracefully."""
     in_q, _ = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, repository=test_repository)
 
     def boom(*a, **k):
         raise IOError("disk failure")
@@ -73,6 +73,7 @@ def test_processor_enqueues_when_netcdf_is_written(
     processor_queues,
     pipeline_config,
     pipeline_output_dirs,
+    test_repository,
 ):
     """Processor saves NetCDF and returns success.
 
@@ -80,7 +81,7 @@ def test_processor_enqueues_when_netcdf_is_written(
     PlotConsumer polls the repository independently.
     """
     in_q, _ = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, repository=test_repository)
 
     # ---- fake filesystem ----
     monkeypatch.setattr(

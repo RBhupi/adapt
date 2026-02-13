@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 import xarray as xr
-import sqlite3
 
 
 from adapt.radar.loader import RadarDataLoader
@@ -131,7 +130,7 @@ class RadarProcessor(threading.Thread):
             Fully validated runtime configuration.
 
         output_dirs : dict
-            Output directory paths (from setup_output_directories):
+            Output directory paths from initialization:
             - nexrad: NEXRAD Level-II files
             - gridded: Regridded NetCDF files
             - analysis: Analysis NetCDF files
@@ -141,18 +140,19 @@ class RadarProcessor(threading.Thread):
         file_tracker : FileProcessingTracker, optional
             Optional file processing tracker to skip already completed files.
 
-        repository : DataRepository, optional
-            Data repository for artifact management. Plotting consumers
-            poll the repository directly for new artifacts.
+        repository : DataRepository
+            Data repository for artifact management and database operations.
+            **Required** - initialized by orchestrator.
 
         name : str, optional
             Thread name for logging (default: "RadarProcessor").
 
         Raises
         ------
-        Exception
-            If database initialization fails or output directories don't exist.
+        ValueError
+            If DataRepository is not provided.
         """
+
         super().__init__(daemon=True, name=name)
 
         self.input_queue = input_queue
@@ -173,183 +173,21 @@ class RadarProcessor(threading.Thread):
         self.dataset_history = []  # List of (filepath, ds) tuples
         self.max_history = self.config.processor.max_history
 
-        # SQLite database connection
-        # If repository is provided, use it for data storage
-        # Otherwise, fall back to legacy direct database access
+        # DataRepository is required for data storage
+        if not self.repository:
+            raise ValueError(
+                "DataRepository is required for processor initialization. "
+                "Repository must be initialized by orchestrator."
+            )
+        
         self.output_lock = threading.Lock()
         self.cells_db_artifact_id: Optional[str] = None
-
-        if self.repository:
-            # Repository handles database creation and management
-            self.db_path = None
-            self.db_conn = None
-            self.db_initialized = False
-            logger.info("Processor using DataRepository for data storage")
-        else:
-            # Legacy mode: direct database access
-            self.db_path = self._get_db_path()
-            self.db_conn = None
-            self._init_database()
-
-    def _get_db_path(self) -> Path:
-        """Get SQLite database path at radar-level (persists across runs/dates).
-
-        Database is stored at: analysis/{radar_id}_cells_statistics.db
-        This ensures all cells from a pipeline run (even across multiple dates)
-        go into the same database.
-
-        radar_id and output_dir are required fields from InternalConfig.downloader.
-        """
-        radar_id = self.config.downloader.radar_id  # Required field, no fallback
-        # New structure: base/RADAR_ID/analysis/
-        analysis_dir = Path(self.output_dirs["base"]) / radar_id / "analysis"
-        analysis_dir.mkdir(parents=True, exist_ok=True)
-
-        # Use filename pattern from config
-        db_filename = self.config.processor.db_filename_pattern.format(radar_id=radar_id)
-        return analysis_dir / db_filename
-
-    def _init_database(self):
-        """Initialize SQLite database (schema created on first insert)."""
-        self.db_conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.db_initialized = False
-        logger.info(f"Database initialized: {self.db_path}")
-
-    def _create_cells_table(self, df_cells: pd.DataFrame):
-        """Create cells table with explicit schema including all expected columns.
-        
-        Creates columns for all possible centroid types (geom, mass, maxdbz, registration, projections),
-        heading statistics, and radar variables. Missing columns are filled with NULL.
-        
-        Primary Key: (time, cell_label) where time = time_volume_start
-        Includes time_volume_start, time, and time_volume_end for temporal tracking.
-        
-        This ensures consistent schema across all files regardless of which features are available.
-        """
-        # Define all expected columns with their types
-        # First scan may not have projections (needs 2+ frames), but schema includes them for consistency
-        expected_columns = {
-            # Temporal keys - all TIMESTAMP
-            "time_volume_start": "TIMESTAMP NOT NULL",  # Start of radar volume scan
-            "time": "TIMESTAMP NOT NULL",  # Analysis time (= time_volume_start)
-            "time_volume_end": "TIMESTAMP",  # End of radar volume scan (future: when available)
-            # Cell identifier
-            "cell_label": "INTEGER NOT NULL",
-            # Basic properties
-            "cell_area_sqkm": "REAL",
-            # Geometric centroid (center of mass)
-            "cell_centroid_geom_x": "INTEGER",
-            "cell_centroid_geom_y": "INTEGER",
-            "cell_centroid_geom_lat": "REAL",
-            "cell_centroid_geom_lon": "REAL",
-            # Mass-weighted centroid (reflectivity weighted)
-            "cell_centroid_mass_x": "INTEGER",
-            "cell_centroid_mass_y": "INTEGER",
-            "cell_centroid_mass_lat": "REAL",
-            "cell_centroid_mass_lon": "REAL",
-            # Max reflectivity centroid
-            "cell_centroid_maxdbz_x": "INTEGER",
-            "cell_centroid_maxdbz_y": "INTEGER",
-            "cell_centroid_maxdbz_lat": "REAL",
-            "cell_centroid_maxdbz_lon": "REAL",
-            # Registration centroid (projection index 0 - frame-to-frame tracking)
-            "cell_centroid_registration_x": "INTEGER",
-            "cell_centroid_registration_y": "INTEGER",
-            "cell_centroid_registration_lat": "REAL",
-            "cell_centroid_registration_lon": "REAL",
-            # Forward projection centroids (indices 1-5, configurable)
-            "cell_centroid_projection1_x": "INTEGER",
-            "cell_centroid_projection1_y": "INTEGER",
-            "cell_centroid_projection1_lat": "REAL",
-            "cell_centroid_projection1_lon": "REAL",
-            "cell_centroid_projection2_x": "INTEGER",
-            "cell_centroid_projection2_y": "INTEGER",
-            "cell_centroid_projection2_lat": "REAL",
-            "cell_centroid_projection2_lon": "REAL",
-            "cell_centroid_projection3_x": "INTEGER",
-            "cell_centroid_projection3_y": "INTEGER",
-            "cell_centroid_projection3_lat": "REAL",
-            "cell_centroid_projection3_lon": "REAL",
-            "cell_centroid_projection4_x": "INTEGER",
-            "cell_centroid_projection4_y": "INTEGER",
-            "cell_centroid_projection4_lat": "REAL",
-            "cell_centroid_projection4_lon": "REAL",
-            "cell_centroid_projection5_x": "INTEGER",
-            "cell_centroid_projection5_y": "INTEGER",
-            "cell_centroid_projection5_lat": "REAL",
-            "cell_centroid_projection5_lon": "REAL",
-            # Motion vector statistics
-            "cell_heading_x_mean": "REAL",
-            "cell_heading_y_mean": "REAL",
-            # Projection centroids as JSON (compact storage)
-            "cell_projection_centroids_json": "TEXT",
-        }
-        
-        # Add radar variable statistics (from config whitelist)
-        radar_vars = self.config.analyzer.radar_variables
-        for var in radar_vars:
-            for stat in ["mean", "min", "max"]:
-                col_name = f"radar_{var}_{stat}"
-                expected_columns[col_name] = "REAL"
-        
-        # Merge with any extra columns from current DataFrame
-        # (in case analyzer adds new columns we haven't anticipated)
-        col_defs = []
-        
-        # Add columns in a logical order: keys, geometry, centroids, motion, radar
-        column_order = ["time_volume_start", "time", "time_volume_end", "cell_label", "cell_area_sqkm"]
-        
-        # Add all expected columns
-        for col_name in sorted(expected_columns.keys()):
-            if col_name not in column_order:
-                column_order.append(col_name)
-        
-        # Add any extra columns from current df that we didn't anticipate
-        for col in df_cells.columns:
-            if col not in expected_columns:
-                column_order.append(col)
-        
-        # Build column definitions
-        for col in column_order:
-            if col in expected_columns:
-                col_defs.append(f'"{col}" {expected_columns[col]}')
-            else:
-                # Dynamically determine type for unexpected columns
-                if col.endswith("_x") or col.endswith("_y"):
-                    col_defs.append(f'"{col}" INTEGER')
-                elif col.endswith("_lat") or col.endswith("_lon"):
-                    col_defs.append(f'"{col}" REAL')
-                elif col.startswith("radar_"):
-                    col_defs.append(f'"{col}" REAL')
-                elif "_json" in col:
-                    col_defs.append(f'"{col}" TEXT')
-                else:
-                    col_defs.append(f'"{col}" TEXT')
-        
-        col_defs_str = ",\n    ".join(col_defs)
-        create_sql = f"""
-        CREATE TABLE IF NOT EXISTS cells (
-            {col_defs_str},
-            PRIMARY KEY (time, cell_label)
-        )
-        """
-        self.db_conn.execute(create_sql)
-        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time ON cells(time)")
-        self.db_conn.execute("CREATE INDEX IF NOT EXISTS idx_time_volume_start ON cells(time_volume_start)")
-        self.db_conn.commit()
-        logger.info("Database schema created with composite PK (time, cell_label)")
-        logger.info(f"   Temporal columns: time_volume_start, time, time_volume_end (TIMESTAMP)")
-        logger.info(f"   Total columns: {len(col_defs)} (includes future-proof centroid/heading/projection slots)")
+        logger.info("Processor initialized with DataRepository for data storage")
 
     def stop(self):
         """Signal processor to stop gracefully."""
         self._stop_event.set()
-
-    def close_database(self):
-        """Close database connection (call after final save)."""
-        if self.db_conn:
-            self.db_conn.close()
-            logger.info("Database connection closed")
 
     def stopped(self):
         """Check if processor should stop."""
@@ -516,35 +354,6 @@ class RadarProcessor(threading.Thread):
         
         return ds_2d
 
-    def _get_table_columns(self) -> list:
-        """Get list of column names from existing cells table."""
-        try:
-            cursor = self.db_conn.execute("PRAGMA table_info(cells)")
-            return [row[1] for row in cursor.fetchall()]
-        except:
-            return []
-
-    def _align_dataframe_to_schema(self, df_cells: pd.DataFrame) -> pd.DataFrame:
-        """Align DataFrame columns to existing table schema.
-        
-        Ensures all columns from the table schema are present in the DataFrame,
-        filling missing columns with NULL values. This handles cases where:
-        - First file creates schema with only available columns
-        - Subsequent files have new columns from enhanced extraction
-        - Early frames lack projection data (need 2+ frames)
-        """
-        existing_cols = self._get_table_columns()
-        if existing_cols:
-            # Add missing columns with NULL values
-            missing_cols = [c for c in existing_cols if c not in df_cells.columns]
-            if missing_cols:
-                logger.debug("DataFrame missing %d columns: %s (filling with NULL)", len(missing_cols), missing_cols[:5])
-                for col in missing_cols:
-                    df_cells[col] = None
-            
-            # Ensure column order matches table schema
-            df_cells = df_cells[existing_cols]
-        return df_cells
 
     def _analyze_and_save(self, ds_2d, filepath, nc_full_path, num_cells, scan_time):
         """Analyze cells (now has projection info), update tracker, insert into SQLite DB."""
@@ -569,30 +378,19 @@ class RadarProcessor(threading.Thread):
         self._log_cell_statistics(df_cells)
 
         with self.output_lock:
-            if self.repository:
-                # Use DataRepository for storage
-                if self.cells_db_artifact_id is None:
-                    self.cells_db_artifact_id = self.repository.get_or_create_cells_db(
-                        scan_time=scan_time or datetime.now(timezone.utc),
-                        producer="processor"
-                    )
-                    self.db_initialized = True
-
-                self.repository.write_sqlite_table(
-                    df=df_cells,
-                    table_name='cells',
-                    artifact_id=self.cells_db_artifact_id
+            # Use DataRepository for storage
+            if self.cells_db_artifact_id is None:
+                self.cells_db_artifact_id = self.repository.get_or_create_cells_db(
+                    scan_time=scan_time or datetime.now(timezone.utc),
+                    producer="processor"
                 )
-            else:
-                # Legacy mode: direct database access
-                if not self.db_initialized:
-                    self._create_cells_table(df_cells)
-                    self.db_initialized = True
-                else:
-                    # Align DataFrame to existing table schema (handles files with different variables)
-                    df_cells = self._align_dataframe_to_schema(df_cells)
-                # Append data (schema already exists)
-                df_cells.to_sql('cells', self.db_conn, if_exists='append', index=False)
+                self.db_initialized = True
+
+            self.repository.write_sqlite_table(
+                df=df_cells,
+                table_name='cells',
+                artifact_id=self.cells_db_artifact_id
+            )
 
         logger.info("Successfully processed: %s (saved %d cells to DB)", Path(filepath).name, len(df_cells))
         tracker = self.file_tracker
@@ -639,9 +437,8 @@ class RadarProcessor(threading.Thread):
     def get_results(self) -> pd.DataFrame:
         """Return all processed cell statistics as a DataFrame.
 
-        Thread-safe query of the SQLite database containing all cells extracted
-        from processed files. Can be called while processor is running (WAL mode
-        enables concurrent access).
+        Thread-safe query from DataRepository containing all cells extracted
+        from processed files. Can be called while processor is running.
 
         Returns
         -------
@@ -651,76 +448,47 @@ class RadarProcessor(threading.Thread):
         """
         with self.output_lock:
             # Don't query before schema is created
-            if not self.db_initialized:
+            if not self.db_initialized or not self.cells_db_artifact_id:
                 return pd.DataFrame()
 
             try:
-                if self.repository and self.cells_db_artifact_id:
-                    return self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
-                elif self.db_conn:
-                    return pd.read_sql("SELECT * FROM cells", self.db_conn)
-                else:
-                    return pd.DataFrame()
+                return self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
             except Exception as e:
                 logger.warning("Failed to read from database: %s", e)
                 return pd.DataFrame()
 
     def save_results(self, filepath: str = None):
-        """Export all cell statistics to Parquet file.
+        """Export all cell statistics to Parquet file via DataRepository.
 
-        Creates a single Parquet file containing all cells from the SQLite
-        database. Parquet format is efficient for subsequent analysis with Pandas,
+        Creates a single Parquet file containing all cells from the database.
+        Parquet format is efficient for subsequent analysis with Pandas,
         DuckDB, Polars, or other analytical tools.
 
         Parameters
         ----------
         filepath : str, optional
-            Output Parquet filepath. If None, uses:
-            `{output_dirs['analysis']}/{radar_id}_cells_statistics.parquet`
+            Currently unused (for API compatibility). Parquet is stored via
+            DataRepository.
         """
         try:
             with self.output_lock:
-                if self.repository and self.cells_db_artifact_id:
-                    # Use DataRepository for storage
-                    try:
-                        df = self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
-                        if len(df) > 0:
-                            self.repository.write_parquet(
-                                df=df,
-                                product_type=ProductType.CELLS_PARQUET,
-                                scan_time=datetime.now(timezone.utc),
-                                producer="processor",
-                                parent_ids=[self.cells_db_artifact_id],
-                                metadata={"row_count": len(df)}
-                            )
-                            logger.info("Exported %d rows to Parquet via DataRepository", len(df))
-                        else:
-                            logger.warning("No results to export")
-                    except Exception as e:
-                        logger.warning("Failed to export via DataRepository: %s", e)
-                elif self.db_conn:
-                    # Legacy mode: direct database access
-                    if filepath is None:
-                        radar_id = self.config.downloader.radar_id
-                        analysis_dir = Path(self.output_dirs["base"]) / radar_id / "analysis"
-                        filepath = analysis_dir / f"{radar_id}_cells_statistics.parquet"
+                if not self.cells_db_artifact_id:
+                    logger.warning("No results to export (no artifact created)")
+                    return
 
-                    filepath = Path(filepath)
-                    filepath.parent.mkdir(parents=True, exist_ok=True)
-
-                    cursor = self.db_conn.execute("SELECT COUNT(*) FROM cells")
-                    count = cursor.fetchone()[0]
-
-                    if count > 0:
-                        df = pd.read_sql("SELECT * FROM cells", self.db_conn)
-                        df.to_parquet(filepath, engine='pyarrow',
-                                      compression=self.config.output.compression,
-                                      index=False)
-                        logger.info("Exported %d rows to: %s", count, filepath)
-                    else:
-                        logger.warning("No results to export")
+                df = self.repository.open_table(self.cells_db_artifact_id, table_name='cells')
+                if len(df) > 0:
+                    self.repository.write_parquet(
+                        df=df,
+                        product_type=ProductType.CELLS_PARQUET,
+                        scan_time=datetime.now(timezone.utc),
+                        producer="processor",
+                        parent_ids=[self.cells_db_artifact_id],
+                        metadata={"row_count": len(df)}
+                    )
+                    logger.info("Exported %d rows to Parquet via DataRepository", len(df))
                 else:
-                    logger.warning("No database connection available for export")
+                    logger.warning("No results to export")
 
         except Exception as e:
             logger.exception("Failed to export results")
