@@ -21,7 +21,6 @@ Author: Bhupendra Raut
 
 import sys
 import argparse
-import importlib.util
 import threading
 import time
 from pathlib import Path
@@ -34,7 +33,7 @@ from adapt.schemas import init_runtime_config
 from adapt.pipeline.orchestrator import PipelineOrchestrator
 
 
-def main():
+def parse_args():
     parser = argparse.ArgumentParser(description="Run the ADAPT NEXRAD processing pipeline")
     parser.add_argument("config", help="Path to user config file")
     parser.add_argument("--radar-id", help="Override radar ID")
@@ -49,31 +48,19 @@ def main():
     parser.add_argument("--show-plots", action="store_true", help="Display plots in live window")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
-    
-    # Complete runtime initialization - does EVERYTHING
+    return args
+
+
+def main():
+    args = parse_args()
+
+    # Runtime initialization - merges user config with defaults and validates
     config = init_runtime_config(args)
     
-    # Create orchestrator with ready config - pure execution engine
+    # Orchestrator takes config - this is our execution engine
     orchestrator = PipelineOrchestrator(config)
-    
-    # Print summary using args directly where possible
-    print(f"\n{'='*60}")
-    print("ADAPT Radar Processing Pipeline")
-    print('='*60)
-    print(f"Config: {args.config}")
-    print(f"Radar:  {args.radar_id or config.downloader.radar_id}")  # Use args first
-    print(f"Mode:   {args.mode or config.mode}")  # Use args first  
-    print(f"Output: {args.base_dir or config.base_dir}")  # Use args first
-    print(f"Run ID: {config.run_id}")
-    print('='*60)
 
-    if args.verbose:
-        import json
-        print("\nFull Runtime Configuration:")
-        print(json.dumps(config.model_dump(), indent=2, default=str))
-        print('='*60)
-
-    # Plot consumer thread (repository-driven, decoupled from processing)
+    # Plot consumer thread (repository-driven, I am tying to decouple it from processing)
     plot_consumer = None
     stop_event = threading.Event()
 
@@ -97,7 +84,7 @@ def main():
     orchestrator_thread.start()
 
     # Wait briefly for repository to be initialized
-    time.sleep(0.5)
+    time.sleep(2)
 
     # Start plot consumer if enabled
     if not args.no_plot and orchestrator.repository is not None:
