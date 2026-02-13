@@ -1,6 +1,6 @@
 import pytest
 from adapt.radar.downloader import AwsNexradDownloader
-from adapt.schemas import UserConfig
+from adapt.schemas.user import UserConfig
 from datetime import datetime, timedelta, timezone
 
 

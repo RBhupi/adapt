@@ -1,9 +1,9 @@
 """
 Directory setup for radar pipeline.
 
-Supports flat directory structure (YYYYMMDD), good for multiday analysis.
+Supports radar-first directory structure for better organization:
+- Structure: root_dir/RADAR_ID/type/YYYYMMDD/
 - NEXRAD files keep original AWS names (no renaming)
-- Date-first hierarchy: YYYYMMDD/RADAR
 - Consistent across all output types
 - Timestamps in filenames for easy sorting
 
@@ -53,33 +53,32 @@ def setup_output_directories(base_output_dir=None):
             base_output_dir = Path.cwd() / "output"
     
     base_output_dir = Path(base_output_dir).expanduser().resolve()
-    
-    # Create subdirectories
+
+    # New structure: only base and logs at root level
+    # All other directories (nexrad, gridnc, analysis, plots) are created
+    # dynamically under RADAR_ID/ by the path helper functions
     directories = {
         "base": base_output_dir,
-        "nexrad": base_output_dir / "nexrad",
-        "gridnc": base_output_dir / "gridnc",
-        "analysis": base_output_dir / "analysis",
-        "plots": base_output_dir / "plots",
         "logs": base_output_dir / "logs",
     }
-    
-    # Create all directories
+
+    # Create base and logs directories only
     for key, path in directories.items():
         path.mkdir(parents=True, exist_ok=True)
-    
+
     print("\nOutput directories created:")
-    for key, path in directories.items():
-        print(f"  {key:12s}: {path}")
+    print(f"  {'base':12s}: {base_output_dir}")
+    print(f"  {'logs':12s}: {directories['logs']}")
+    print("  (Other directories created dynamically under RADAR_ID/)")
     print("=" * 70 + "\n")
-    
+
     return directories
 
 
 def get_nexrad_path(output_dirs, radar_id, filename, scan_time=None):
     """
     Get new NEXRAD Level-II file path (preserves original AWS names).
-    
+
     Parameters
     ----------
     output_dirs : dict
@@ -90,16 +89,16 @@ def get_nexrad_path(output_dirs, radar_id, filename, scan_time=None):
         Original AWS filename (e.g., 'KDIX20251126_221706_V06')
     scan_time : datetime or str, optional
         Scan timestamp for YYYYMMDD directory. If None, extracted from filename.
-    
+
     Returns
     -------
     Path
-        Full path: nexrad/YYYYMMDD/RADAR_ID/original_filename
-    
+        Full path: base/RADAR_ID/nexrad/YYYYMMDD/original_filename
+
     Example
     -------
     >>> get_nexrad_path(dirs, 'KDIX', 'KDIX20251126_221706_V06')
-    Path('output/nexrad/20251126/KDIX/KDIX20251126_221706_V06')
+    Path('output/KDIX/nexrad/20251126/KDIX20251126_221706_V06')
     """
     # Extract date from filename if not provided
     if scan_time is None:
@@ -111,19 +110,19 @@ def get_nexrad_path(output_dirs, radar_id, filename, scan_time=None):
             scan_time = datetime.now(timezone.utc)
     elif isinstance(scan_time, str):
         scan_time = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
-    
-    # Create YYYYMMDD/RADAR_ID directory structure
+
+    # Create RADAR_ID/nexrad/YYYYMMDD directory structure
     date_str = scan_time.strftime("%Y%m%d")
-    output_dir = output_dirs["nexrad"] / date_str / radar_id
+    output_dir = output_dirs["base"] / radar_id / "nexrad" / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return output_dir / filename
 
 
 def get_netcdf_path(output_dirs, radar_id, filename, scan_time=None):
     """
     Get organized NetCDF file path (mirrors NEXRAD structure).
-    
+
     Parameters
     ----------
     output_dirs : dict
@@ -134,16 +133,16 @@ def get_netcdf_path(output_dirs, radar_id, filename, scan_time=None):
         Base filename (with or without .nc extension)
     scan_time : datetime or str, optional
         Scan timestamp. If None, extracted from filename.
-    
+
     Returns
     -------
     Path
-        Full path: gridnc/YYYYMMDD/RADAR_ID/filename.nc
-    
+        Full path: base/RADAR_ID/gridnc/YYYYMMDD/filename.nc
+
     Example
     -------
     >>> get_netcdf_path(dirs, 'KDIX', 'KDIX20251126_221706_V06')
-    Path('output/gridnc/20251126/KDIX/KDIX20251126_221706_V06.nc')
+    Path('output/KDIX/gridnc/20251126/KDIX20251126_221706_V06.nc')
     """
     # Extract date from filename if not provided
     if scan_time is None:
@@ -154,23 +153,23 @@ def get_netcdf_path(output_dirs, radar_id, filename, scan_time=None):
             scan_time = datetime.now(timezone.utc)
     elif isinstance(scan_time, str):
         scan_time = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
-    
-    # Create YYYYMMDD/RADAR_ID directory structure
+
+    # Create RADAR_ID/gridnc/YYYYMMDD directory structure
     date_str = scan_time.strftime("%Y%m%d")
-    output_dir = output_dirs["gridnc"] / date_str / radar_id
+    output_dir = output_dirs["base"] / radar_id / "gridnc" / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Ensure .nc extension
     if not filename.endswith('.nc'):
         filename = filename + '.nc'
-    
+
     return output_dir / filename
 
 
 def get_analysis_path(output_dirs, radar_id=None, analysis_type="parquet", timestamp=None, filename=None):
     """
-    Get organized analysis file path (YYYYMMDD/RADAR_ID structure).
-    
+    Get organized analysis file path (RADAR_ID/analysis/YYYYMMDD structure).
+
     Parameters
     ----------
     output_dirs : dict
@@ -183,34 +182,34 @@ def get_analysis_path(output_dirs, radar_id=None, analysis_type="parquet", times
         Timestamp for directory. If None, uses current time.
     filename : str, optional
         Custom filename. If None, generates from radar_id and timestamp.
-    
+
     Returns
     -------
     Path
-        Full path: analysis/YYYYMMDD/RADAR_ID/filename.ext
-    
+        Full path: base/RADAR_ID/analysis/YYYYMMDD/filename.ext
+
     Example
     -------
     >>> get_analysis_path(dirs, radar_id='KDIX', analysis_type='parquet')
-    Path('output/analysis/20251126/KDIX/KDIX_cells_properties.parquet')
-    
-    >>> get_analysis_path(dirs, radar_id='KDIX', analysis_type='db', 
+    Path('output/KDIX/analysis/20251126/KDIX_cells_properties.parquet')
+
+    >>> get_analysis_path(dirs, radar_id='KDIX', analysis_type='db',
     ...                   filename='KDIX_cells_statistics.db')
-    Path('output/analysis/20251126/KDIX/KDIX_cells_statistics.db')
+    Path('output/KDIX/analysis/20251126/KDIX_cells_statistics.db')
     """
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     elif isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-    
-    # Create YYYYMMDD/RADAR_ID directory
+
+    # Create RADAR_ID/analysis/YYYYMMDD directory
     date_str = timestamp.strftime("%Y%m%d")
     if radar_id:
-        date_dir = output_dirs["analysis"] / date_str / radar_id
+        date_dir = output_dirs["base"] / radar_id / "analysis" / date_str
     else:
-        date_dir = output_dirs["analysis"] / date_str
+        date_dir = output_dirs["base"] / "analysis" / date_str
     date_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Generate filename if not provided
     if filename is None:
         ext = analysis_type if not analysis_type.startswith('.') else analysis_type[1:]
@@ -218,14 +217,14 @@ def get_analysis_path(output_dirs, radar_id=None, analysis_type="parquet", times
             filename = f"{radar_id}_cells_properties.{ext}"
         else:
             filename = f"combined_cells_properties.{ext}"
-    
+
     return date_dir / filename
 
 
 def get_plot_path(output_dirs, radar_id=None, plot_type="reflectivity", timestamp=None, scan_time=None):
     """
-    Get organized plot file path (YYYYMMDD/RADAR_ID structure).
-    
+    Get organized plot file path (RADAR_ID/plots/YYYYMMDD structure).
+
     Parameters
     ----------
     output_dirs : dict
@@ -238,41 +237,41 @@ def get_plot_path(output_dirs, radar_id=None, plot_type="reflectivity", timestam
         Timestamp for file naming (scan time). If None, uses current time.
     scan_time : datetime or str, optional
         Alias for timestamp (for consistency with other functions)
-    
+
     Returns
     -------
     Path
-        Full path: plots/YYYYMMDD/RADAR_ID/RADAR_ID_plottype_HHMMSS.png
-    
+        Full path: base/RADAR_ID/plots/YYYYMMDD/RADAR_ID_plottype_HHMMSS.png
+
     Example
     -------
     >>> get_plot_path(dirs, radar_id='KDIX', plot_type='reflectivity')
-    Path('output/plots/20251126/KDIX/KDIX_reflectivity_221706.png')
+    Path('output/KDIX/plots/20251126/KDIX_reflectivity_221706.png')
     """
     # Use scan_time if provided (takes precedence)
     if scan_time is not None:
         timestamp = scan_time
-    
+
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     elif isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-    
-    # Create YYYYMMDD/RADAR_ID directory
+
+    # Create RADAR_ID/plots/YYYYMMDD directory
     date_str = timestamp.strftime("%Y%m%d")
     if radar_id:
-        date_dir = output_dirs["plots"] / date_str / radar_id
+        date_dir = output_dirs["base"] / radar_id / "plots" / date_str
     else:
-        date_dir = output_dirs["plots"] / date_str
+        date_dir = output_dirs["base"] / "plots" / date_str
     date_dir.mkdir(parents=True, exist_ok=True)
-    
+
     time_str = timestamp.strftime("%H%M%S")
-    
+
     if radar_id:
         filename = f"{radar_id}_{plot_type}_{time_str}.png"
     else:
         filename = f"combined_{plot_type}_{time_str}.png"
-    
+
     return date_dir / filename
 
 
@@ -311,35 +310,41 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("TESTING DIRECTORY STRUCTURE")
     print("=" * 70)
-    
+    print("\nNew structure: base/RADAR_ID/type/YYYYMMDD/\n")
+
     # Test setup
     dirs = setup_output_directories()
-    
+
     # Test NEXRAD path (preserves original names)
+    # Expected: output/KDIX/nexrad/20251126/KDIX20251126_221706_V06
     nexrad_path = get_nexrad_path(dirs, "KDIX", "KDIX20251126_221706_V06")
-    print(f"\nNEXRAD path: {nexrad_path}")
-    
+    print(f"NEXRAD path: {nexrad_path}")
+
     # Test NetCDF path (mirrors NEXRAD)
+    # Expected: output/KDIX/gridnc/20251126/KDIX20251126_221706_V06.nc
     nc_path = get_netcdf_path(dirs, "KDIX", "KDIX20251126_221706_V06")
     print(f"NetCDF path: {nc_path}")
-    
+
     # Test analysis path
+    # Expected: output/KDIX/analysis/YYYYMMDD/KDIX_cells_properties.parquet
     analysis_path = get_analysis_path(dirs, "KDIX", "parquet")
     print(f"Analysis path: {analysis_path}")
-    
+
     # Test SQLite path
-    db_path = get_analysis_path(dirs, "KDIX", "db", 
+    # Expected: output/KDIX/analysis/YYYYMMDD/KDIX_cells_statistics.db
+    db_path = get_analysis_path(dirs, "KDIX", "db",
                                 filename="KDIX_cells_statistics.db")
     print(f"SQLite path: {db_path}")
-    
+
     # Test plot path
+    # Expected: output/KDIX/plots/YYYYMMDD/KDIX_reflectivity_HHMMSS.png
     plot_path = get_plot_path(dirs, "KDIX", "reflectivity")
     print(f"Plot path: {plot_path}")
-    
-    # Test log path
+
+    # Test log path (logs stay at base level)
     log_path = get_log_path(dirs, "KDIX")
     print(f"Log path: {log_path}")
-    
+
     print("\n" + "=" * 70)
     print("DIRECTORY STRUCTURE VERIFIED")
     print("=" * 70)

@@ -13,6 +13,8 @@ from typing import Optional, TYPE_CHECKING
 
 from nexradaws import NexradAwsInterface
 
+from adapt.setup_directories import get_nexrad_path
+
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
 
@@ -67,9 +69,10 @@ class AwsNexradDownloader(threading.Thread):
     """
 
     def __init__(
-        self, 
+        self,
         config: "InternalConfig",
-        output_dir: Path,
+        output_dir: Path = None,
+        output_dirs: dict = None,
         result_queue=None,
         file_tracker=None,
         conn=None,
@@ -82,14 +85,19 @@ class AwsNexradDownloader(threading.Thread):
         ----------
         config : InternalConfig
             Fully validated runtime configuration.
-            
-        output_dir : Path
-            Local directory where Level-II files are saved (from output_dirs["nexrad"]).
-            
+
+        output_dir : Path, optional
+            DEPRECATED: Use output_dirs instead.
+            Legacy parameter for backward compatibility.
+
+        output_dirs : dict, optional
+            Output directories dict from setup_output_directories().
+            Used for new path structure (RADAR_ID/nexrad/YYYYMMDD/).
+
         result_queue : queue.Queue, optional
             Queue to push filepaths of downloaded files. Processor reads from
             this queue. If None, no downstream notification (download-only mode).
-            
+
         file_tracker : FileProcessingTracker, optional
             Optional file processing tracker to record download completion.
 
@@ -116,7 +124,9 @@ class AwsNexradDownloader(threading.Thread):
 
         self.config = config
         self.radar_id = config.downloader.radar_id
-        self.output_dir = Path(output_dir)
+        self.output_dirs = output_dirs
+        # Legacy support: if output_dir provided but not output_dirs, use old behavior
+        self.output_dir = Path(output_dir) if output_dir else None
         self.poll_interval_sec = config.downloader.poll_interval_sec
         self.latest_files = config.downloader.latest_files
         self.latest_minutes = config.downloader.latest_minutes
@@ -487,9 +497,20 @@ class AwsNexradDownloader(threading.Thread):
         return new_downloads
 
     def _get_local_path(self, scan) -> Path:
-        """Get local path for scan (YYYYMMDD/RADAR_ID/filename)."""
-        date_str = scan.scan_time.strftime("%Y%m%d")
+        """Get local path for scan using new structure: base/RADAR_ID/nexrad/YYYYMMDD/filename."""
         filename = Path(scan.key).name
+
+        # Use new path function if output_dirs available
+        if self.output_dirs:
+            return get_nexrad_path(
+                self.output_dirs,
+                self.radar_id,
+                filename,
+                scan_time=scan.scan_time
+            )
+
+        # Legacy fallback: use output_dir directly with old structure
+        date_str = scan.scan_time.strftime("%Y%m%d")
         return (self.output_dir / date_str / self.radar_id / filename).resolve()
 
     def _file_exists(self, path: Path) -> bool:
@@ -505,7 +526,9 @@ class AwsNexradDownloader(threading.Thread):
             local_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Download to temp then move
-            temp_dir = self.output_dir / "_temp"
+            # Use output_dirs["base"] if available, otherwise output_dir
+            base_dir = self.output_dirs["base"] if self.output_dirs else self.output_dir
+            temp_dir = base_dir / "_temp"
             temp_dir.mkdir(exist_ok=True)
 
             results = self.conn.download([scan], temp_dir, keep_aws_folders=False)

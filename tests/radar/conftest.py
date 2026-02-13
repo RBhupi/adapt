@@ -6,7 +6,9 @@ import xarray as xr
 import tempfile
 import shutil
 from pathlib import Path
-from adapt.schemas import ParamConfig, InternalConfig, UserConfig
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.internal import InternalConfig
+from adapt.schemas.user import UserConfig
 from adapt.schemas.resolve import resolve_config
 from adapt.setup_directories import setup_output_directories
 
@@ -264,8 +266,19 @@ def radar_config(temp_dir) -> InternalConfig:
 
 @pytest.fixture
 def radar_output_dirs(temp_dir):
-    """Output directories for radar tests."""
-    return setup_output_directories(temp_dir)
+    """Output directories for radar tests.
+
+    Returns dict with 'base' and 'logs' from setup_output_directories,
+    plus backward-compatible keys that point to base for legacy tests.
+    """
+    dirs = setup_output_directories(temp_dir)
+    # Add legacy keys for backward compatibility in tests
+    # These point to base since the actual paths are now under RADAR_ID/
+    dirs["nexrad"] = dirs["base"]
+    dirs["gridnc"] = dirs["base"]
+    dirs["analysis"] = dirs["base"]
+    dirs["plots"] = dirs["base"]
+    return dirs
 
 
 

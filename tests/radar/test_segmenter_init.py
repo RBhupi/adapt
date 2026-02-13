@@ -1,7 +1,9 @@
 """Test RadarCellSegmenter initialization with Pydantic configs."""
 
 from adapt.radar.cell_segmenter import RadarCellSegmenter
-from adapt.schemas import ParamConfig, UserConfig, resolve_config
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.user import UserConfig
+from adapt.schemas.resolve import resolve_config
 import pytest
 
 

@@ -25,8 +25,8 @@ def fake_ds():
 
 
 def test_extract_2d_slice(processor_queues, pipeline_config, pipeline_output_dirs):
-    in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
+    in_q, _ = processor_queues
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
 
     ds = fake_ds()
     ds2d = proc._extract_2d_slice(ds)
@@ -37,8 +37,8 @@ def test_extract_2d_slice(processor_queues, pipeline_config, pipeline_output_dir
 
 
 def test_compute_projections_first_frame_noop(processor_queues, pipeline_config, pipeline_output_dirs):
-    in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
+    in_q, _ = processor_queues
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
 
     ds = fake_ds()
     ds2d = proc._extract_2d_slice(ds)
