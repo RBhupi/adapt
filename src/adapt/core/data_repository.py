@@ -592,6 +592,102 @@ class DataRepository:
             cursor = conn.execute(query_str, params)
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_latest(
+        self,
+        product_type: str,
+        radar_id: Optional[str] = None
+    ) -> Optional[Dict]:
+        """Get the most recent artifact of a given type.
+
+        Queries the catalog for the latest artifact by scan_time descending.
+        Used by downstream consumers (e.g., plot consumer) to poll for new data.
+
+        Parameters
+        ----------
+        product_type : str
+            Artifact type to query (use ProductType constants)
+        radar_id : str, optional
+            Filter by radar ID (defaults to repository radar_id)
+
+        Returns
+        -------
+        dict or None
+            Most recent artifact record, or None if no artifacts exist
+        """
+        conn = self._get_connection()
+
+        conditions = ["run_id = ?", "product_type = ?"]
+        params: List = [self.run_id, product_type]
+
+        if radar_id:
+            conditions.append("radar_id = ?")
+            params.append(radar_id)
+
+        where_clause = " AND ".join(conditions)
+        query_str = f"""
+            SELECT * FROM artifacts
+            WHERE {where_clause}
+            ORDER BY scan_time DESC
+            LIMIT 1
+        """
+
+        with self._lock:
+            cursor = conn.execute(query_str, params)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_since(
+        self,
+        product_type: str,
+        since_artifact_id: Optional[str] = None,
+        radar_id: Optional[str] = None
+    ) -> List[Dict]:
+        """Get all artifacts of a type created after a given artifact.
+
+        Used by consumers to catch up on missed artifacts during polling gaps.
+
+        Parameters
+        ----------
+        product_type : str
+            Artifact type to query
+        since_artifact_id : str, optional
+            Return artifacts created after this artifact's scan_time.
+            If None, returns all artifacts of this type.
+        radar_id : str, optional
+            Filter by radar ID
+
+        Returns
+        -------
+        list of dict
+            Artifacts in chronological order (oldest first)
+        """
+        conn = self._get_connection()
+
+        conditions = ["run_id = ?", "product_type = ?"]
+        params: List = [self.run_id, product_type]
+
+        if radar_id:
+            conditions.append("radar_id = ?")
+            params.append(radar_id)
+
+        # If since_artifact_id provided, get its scan_time and filter
+        if since_artifact_id:
+            ref_artifact = self._get_artifact(since_artifact_id)
+            if ref_artifact and ref_artifact.get('scan_time'):
+                conditions.append("scan_time > ?")
+                params.append(ref_artifact['scan_time'])
+
+        where_clause = " AND ".join(conditions)
+        query_str = f"""
+            SELECT * FROM artifacts
+            WHERE {where_clause}
+            ORDER BY scan_time ASC
+        """
+
+        with self._lock:
+            cursor = conn.execute(query_str, params)
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_artifact(self, artifact_id: str) -> Optional[Dict]:
         """Get artifact record by ID (public method).
 

@@ -1,9 +1,12 @@
 """Test config resolution and validation with Pydantic."""
 
 import pytest
-from adapt.schemas import ParamConfig, UserConfig, CLIConfig, InternalConfig
-from adapt.schemas.resolve import resolve_config
-from adapt.schemas.user import UserSegmenterConfig, UserProjectorConfig, UserDownloaderConfig
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.user import UserConfig
+from adapt.schemas.cli import CLIConfig
+from adapt.schemas.internal import InternalConfig
+from adapt.schemas.resolve import resolve_config, deep_merge
+from adapt.schemas.user import UserSegmenterConfig, UserProjectorConfig, UserDownloaderConfig, UserAnalyzerConfig
 
 
 class TestConfigResolution:
@@ -27,7 +30,7 @@ class TestConfigResolution:
     def test_cli_config_with_valid_structure(self):
         """CLIConfig structure validation (if implemented)."""
         # CLIConfig currently has limited fields - test what exists
-        from adapt.schemas import CLIConfig
+        from adapt.schemas.cli import CLIConfig
         # Just verify it can be instantiated
         cli = CLIConfig()
 
@@ -332,3 +335,154 @@ class TestIntegration:
         assert config.projector.flow_params.winsize == 15
         assert config.projector.flow_params.iterations == 5
         assert config.projector.flow_params.poly_n == 7
+
+    def test_analyzer_exclude_fields_union(self):
+        """analyzer.exclude_fields should union defaults with user-provided fields."""
+        # Get default excludes from ParamConfig
+        param = ParamConfig()
+        default_excludes = set(param.analyzer.exclude_fields)
+        
+        # User adds additional excludes
+        user = UserConfig(
+            base_dir="/tmp",
+            radar_id="KHTX",
+            analyzer=UserAnalyzerConfig(
+                exclude_fields=["new_field1", "new_field2"]
+            )
+        )
+        
+        config = resolve_config(param, user, None)
+        
+        # Result should include both defaults AND user additions
+        actual_excludes = set(config.analyzer.exclude_fields)
+        expected_excludes = default_excludes | {"new_field1", "new_field2"}
+        
+        assert actual_excludes == expected_excludes
+        assert "new_field1" in config.analyzer.exclude_fields
+        assert "new_field2" in config.analyzer.exclude_fields
+        # Original defaults should still be there
+        for default_field in default_excludes:
+            assert default_field in config.analyzer.exclude_fields
+
+    def test_analyzer_exclude_fields_via_top_level_alias(self):
+        """analyzer.exclude_fields union also works via top-level UserConfig alias."""
+        param = ParamConfig() 
+        default_excludes = set(param.analyzer.exclude_fields)
+        
+        # User sets exclude_fields at top level (alias)
+        user = UserConfig(
+            base_dir="/tmp", 
+            radar_id="KHTX",
+            exclude_fields=["top_level_exclude"]
+        )
+        
+        config = resolve_config(param, user, None)
+        
+        actual_excludes = set(config.analyzer.exclude_fields)
+        expected_excludes = default_excludes | {"top_level_exclude"}
+        
+        assert actual_excludes == expected_excludes
+
+
+class TestDeepMergeSemantics:
+    """Test deep_merge behavior for lists, dicts, and values."""
+    
+    def test_deep_merge_list_behavior_replacement(self):
+        """Lists should be replaced entirely, not concatenated."""
+        base = {
+            "list_field": ["a", "b", "c"],
+            "other_field": "base_value"
+        }
+        override = {
+            "list_field": ["x", "y"],
+            "new_field": "override_value"
+        }
+        
+        result = deep_merge(base, override)
+        
+        # List should be completely replaced, not merged/concatenated
+        assert result["list_field"] == ["x", "y"]
+        assert result["other_field"] == "base_value"
+        assert result["new_field"] == "override_value"
+    
+    def test_deep_merge_nested_dict_behavior(self):
+        """Nested dicts should merge recursively."""
+        base = {
+            "nested": {
+                "keep_this": "base_value",
+                "override_this": "old_value"
+            },
+            "top_level": "base"
+        }
+        override = {
+            "nested": {
+                "override_this": "new_value", 
+                "add_this": "added"
+            }
+        }
+        
+        result = deep_merge(base, override)
+        
+        # Nested dict should merge, not replace
+        assert result["nested"]["keep_this"] == "base_value"
+        assert result["nested"]["override_this"] == "new_value"
+        assert result["nested"]["add_this"] == "added"
+        assert result["top_level"] == "base"
+        
+    def test_deep_merge_multiple_overrides(self):
+        """Multiple overrides should apply in order."""
+        base = {"field": "base"}
+        override1 = {"field": "middle"}
+        override2 = {"field": "final"}
+        
+        result = deep_merge(base, override1, override2)
+        
+        assert result["field"] == "final"
+
+
+class TestParamConfigCompleteness:
+    """Test ParamConfig provides all runtime-critical defaults."""
+    
+    def test_paramconfig_completeness(self):
+        """ParamConfig should provide all required fields for runtime."""
+        param = ParamConfig()
+        param_dict = param.model_dump()
+        
+        # Critical runtime fields that must be present
+        required_top_level = ["mode", "global_", "downloader", "regridder", 
+                             "segmenter", "analyzer", "projector"]
+        
+        for field in required_top_level:
+            assert field in param_dict, f"Missing required top-level field: {field}"
+            assert param_dict[field] is not None, f"Field {field} is None"
+        
+        # Critical downloader fields
+        downloader = param_dict["downloader"] 
+        downloader_required = ["output_dir", "latest_files", "latest_minutes", "poll_interval_sec"]
+        for field in downloader_required:
+            assert field in downloader, f"Missing downloader field: {field}"
+        
+        # Critical segmenter fields
+        segmenter = param_dict["segmenter"]
+        segmenter_required = ["method", "threshold", "min_cellsize_gridpoint"]
+        for field in segmenter_required:
+            assert field in segmenter, f"Missing segmenter field: {field}"
+            assert segmenter[field] is not None, f"Segmenter field {field} is None"
+        
+        # Critical regridder fields
+        regridder = param_dict["regridder"]
+        regridder_required = ["grid_shape", "grid_limits", "weighting_function"]
+        for field in regridder_required:
+            assert field in regridder, f"Missing regridder field: {field}"
+            assert regridder[field] is not None, f"Regridder field {field} is None"
+    
+    def test_paramconfig_can_instantiate_without_errors(self):
+        """ParamConfig should instantiate successfully with no validation errors."""
+        # This should not raise any ValidationError
+        param = ParamConfig()
+        assert param is not None
+        
+        # Should be able to convert to dict
+        param_dict = param.model_dump()
+        assert isinstance(param_dict, dict)
+        assert len(param_dict) > 0

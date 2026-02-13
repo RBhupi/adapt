@@ -1,33 +1,16 @@
-"""Pydantic configuration schemas for ADAPT pipeline.
+"""Complete runtime initialization for ADAPT pipeline.
 
-This module provides strictly typed configuration models for the ADAPT
-radar processing pipeline. All configuration validation, coercion, and
-normalization happens at schema validation time via Pydantic.
+This module handles configuration resolution, directory setup, cleanup,
+and persistence. It provides a single entry point for complete runtime
+initialization.
 
 Exports
 -------
-resolve_config : function
-    Single entrypoint for configuration resolution
-InternalConfig : class
-    Fully validated, authoritative runtime configuration
-ParamConfig : class
-    Expert defaults (complete)
-UserConfig : class
-    User-facing configuration (forgiving, minimal)
-CLIConfig : class
-    Command-line operational overrides
+init_runtime_config : function
+    Complete runtime initialization - the ONLY public function
 """
 
-from adapt.schemas.resolve import resolve_config
-from adapt.schemas.internal import InternalConfig
-from adapt.schemas.param import ParamConfig
-from adapt.schemas.user import UserConfig
-from adapt.schemas.cli import CLIConfig
+from adapt.schemas.initialization import init_runtime_config
 
-__all__ = [
-    'resolve_config',
-    'InternalConfig',
-    'ParamConfig',
-    'UserConfig',
-    'CLIConfig',
-]
+# Single public function - everything else is internal implementation
+__all__ = ['init_runtime_config']

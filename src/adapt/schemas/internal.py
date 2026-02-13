@@ -168,6 +168,8 @@ class InternalConfig(AdaptBaseModel):
     
     mode: Literal["realtime", "historical"]
     base_dir: str
+    run_id: Optional[str] = Field(default=None, description="Unique run identifier generated during initialization")
+    output_dirs: Optional[dict[str, str]] = Field(default=None, description="Output directory paths from initialization")
     reader: InternalReaderConfig
     downloader: InternalDownloaderConfig
     regridder: InternalRegridderConfig

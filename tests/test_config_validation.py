@@ -8,7 +8,9 @@ Tests that:
 
 import pytest
 from pydantic import ValidationError
-from adapt.schemas import ParamConfig, UserConfig, CLIConfig
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.user import UserConfig
+from adapt.schemas.cli import CLIConfig
 from adapt.schemas.resolve import resolve_config
 
 

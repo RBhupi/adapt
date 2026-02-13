@@ -534,3 +534,186 @@ class TestPathGeneration:
         assert "123045" in path.name  # HHMMSS
         assert "test1234" in path.name  # run_id
         assert path.suffix == ".png"
+
+
+# =========================================================================
+# Test: Get Latest (PlotConsumer API)
+# =========================================================================
+
+
+class TestGetLatest:
+    """Test get_latest method for PlotConsumer polling."""
+
+    def test_get_latest_no_artifacts(self, repository):
+        """Should return None when no artifacts exist."""
+        result = repository.get_latest(ProductType.ANALYSIS_NC)
+        assert result is None
+
+    def test_get_latest_single_artifact(self, repository, temp_base_dir):
+        """Should return the only artifact."""
+        file_path = temp_base_dir / "test.nc"
+        file_path.touch()
+
+        artifact_id = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file_path,
+            scan_time=datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        result = repository.get_latest(ProductType.ANALYSIS_NC)
+        assert result is not None
+        assert result['artifact_id'] == artifact_id
+
+    def test_get_latest_returns_most_recent(self, repository, temp_base_dir):
+        """Should return artifact with most recent scan_time."""
+        file1 = temp_base_dir / "file1.nc"
+        file2 = temp_base_dir / "file2.nc"
+        file3 = temp_base_dir / "file3.nc"
+        file1.touch()
+        file2.touch()
+        file3.touch()
+
+        # Register in non-chronological order
+        repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file1,
+            scan_time=datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        latest_id = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file2,
+            scan_time=datetime(2026, 2, 11, 14, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file3,
+            scan_time=datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        result = repository.get_latest(ProductType.ANALYSIS_NC)
+        assert result['artifact_id'] == latest_id
+
+    def test_get_latest_filters_by_product_type(self, repository, temp_base_dir):
+        """Should only return artifacts of requested type."""
+        file1 = temp_base_dir / "analysis.nc"
+        file2 = temp_base_dir / "gridded.nc"
+        file1.touch()
+        file2.touch()
+
+        analysis_id = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file1,
+            scan_time=datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        repository.register_artifact(
+            product_type=ProductType.GRIDDED_NC,
+            file_path=file2,
+            scan_time=datetime(2026, 2, 11, 14, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        result = repository.get_latest(ProductType.ANALYSIS_NC)
+        assert result['artifact_id'] == analysis_id
+        assert result['product_type'] == ProductType.ANALYSIS_NC
+
+
+class TestGetAllSince:
+    """Test get_all_since method for catching up missed artifacts."""
+
+    def test_get_all_since_no_reference(self, repository, temp_base_dir):
+        """Should return all artifacts when no reference provided."""
+        file1 = temp_base_dir / "file1.nc"
+        file2 = temp_base_dir / "file2.nc"
+        file1.touch()
+        file2.touch()
+
+        repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file1,
+            scan_time=datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file2,
+            scan_time=datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        results = repository.get_all_since(ProductType.ANALYSIS_NC)
+        assert len(results) == 2
+
+    def test_get_all_since_with_reference(self, repository, temp_base_dir):
+        """Should return only artifacts after reference."""
+        file1 = temp_base_dir / "file1.nc"
+        file2 = temp_base_dir / "file2.nc"
+        file3 = temp_base_dir / "file3.nc"
+        file1.touch()
+        file2.touch()
+        file3.touch()
+
+        id1 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file1,
+            scan_time=datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        id2 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file2,
+            scan_time=datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        id3 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file3,
+            scan_time=datetime(2026, 2, 11, 14, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        # Get artifacts after id1
+        results = repository.get_all_since(ProductType.ANALYSIS_NC, since_artifact_id=id1)
+        assert len(results) == 2
+        result_ids = [r['artifact_id'] for r in results]
+        assert id2 in result_ids
+        assert id3 in result_ids
+        assert id1 not in result_ids
+
+    def test_get_all_since_returns_chronological_order(self, repository, temp_base_dir):
+        """Should return artifacts in chronological order (oldest first)."""
+        file1 = temp_base_dir / "file1.nc"
+        file2 = temp_base_dir / "file2.nc"
+        file3 = temp_base_dir / "file3.nc"
+        file1.touch()
+        file2.touch()
+        file3.touch()
+
+        id1 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file1,
+            scan_time=datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        id2 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file2,
+            scan_time=datetime(2026, 2, 11, 14, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+        id3 = repository.register_artifact(
+            product_type=ProductType.ANALYSIS_NC,
+            file_path=file3,
+            scan_time=datetime(2026, 2, 11, 12, 0, 0, tzinfo=timezone.utc),
+            producer="test"
+        )
+
+        results = repository.get_all_since(ProductType.ANALYSIS_NC)
+        # Should be in chronological order: id1, id3, id2
+        assert results[0]['artifact_id'] == id1
+        assert results[1]['artifact_id'] == id3
+        assert results[2]['artifact_id'] == id2

@@ -14,8 +14,8 @@ def test_process_missing_file(pipeline_config, pipeline_output_dirs):
 
 def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
     """Processor handles None return from loader."""
-    in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
+    in_q, _ = processor_queues
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
 
     monkeypatch.setattr(
         proc.loader,
@@ -25,13 +25,12 @@ def test_loader_returns_none(monkeypatch, processor_queues, pipeline_config, pip
 
     ok = proc.process_file("/fake/path/file")
     assert ok is False
-    assert out_q.empty()
 
 
 def test_processor_handles_loader_exception(monkeypatch, processor_queues, pipeline_config, pipeline_output_dirs):
     """Processor handles loader exceptions gracefully."""
-    in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
+    in_q, _ = processor_queues
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
 
     def boom(*a, **k):
         raise IOError("disk failure")
@@ -41,7 +40,6 @@ def test_processor_handles_loader_exception(monkeypatch, processor_queues, pipel
     ok = proc.process_file("/fake/path/file")
 
     assert ok is False
-    assert out_q.empty()
 
 # following test (test_processor_enqueues_when_netcdf_is_written) was most painful to write and pass .
 def make_fake_grid_ds(with_labels=True):
@@ -76,9 +74,13 @@ def test_processor_enqueues_when_netcdf_is_written(
     pipeline_config,
     pipeline_output_dirs,
 ):
-    """Processor enqueues file after writing NetCDF."""
-    in_q, out_q = processor_queues
-    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs, out_q)
+    """Processor saves NetCDF and returns success.
+
+    Note: With the new architecture, processor no longer enqueues to plotter.
+    PlotConsumer polls the repository independently.
+    """
+    in_q, _ = processor_queues
+    proc = RadarProcessor(in_q, pipeline_config, pipeline_output_dirs)
 
     # ---- fake filesystem ----
     monkeypatch.setattr(
@@ -129,4 +131,3 @@ def test_processor_enqueues_when_netcdf_is_written(
     ok = proc.process_file("/fake/file")
 
     assert ok is True
-    assert out_q.qsize() == 1

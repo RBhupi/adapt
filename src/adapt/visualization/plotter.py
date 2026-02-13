@@ -27,8 +27,9 @@ except ImportError:
 
 if TYPE_CHECKING:
     from adapt.schemas import InternalConfig
+    from adapt.core import DataRepository
 
-__all__ = ['RadarPlotter', 'PlotterThread']
+__all__ = ['RadarPlotter', 'PlotterThread', 'PlotConsumer']
 
 logger = logging.getLogger(__name__)
 
@@ -800,6 +801,283 @@ class PlotterThread(threading.Thread):
         """Signal thread to stop and join gracefully."""
         self.running = False
         self.input_queue.put(None)
+
+
+class PlotConsumer(threading.Thread):
+    """Repository-driven plot consumer thread.
+
+    Polls the DataRepository for new analysis artifacts and generates
+    visualizations. This consumer is completely decoupled from the processing
+    pipeline - it only reads from the repository.
+
+    **Architecture:**
+
+    The PlotConsumer runs as an independent thread that:
+    1. Polls repository.get_latest(ANALYSIS_NC) every poll_interval seconds
+    2. When a new artifact is detected, loads the dataset via repository.open_dataset()
+    3. Generates visualization using RadarPlotter
+    4. Saves figure to disk and optionally displays live
+    5. Prints table statistics from cells database
+
+    **Thread Safety:**
+
+    - Repository uses WAL mode SQLite for concurrent read/write
+    - PlotConsumer only reads, never writes to repository
+    - No shared state with processing threads
+
+    **Graceful Shutdown:**
+
+    Call stop() to signal shutdown. The thread will complete any in-progress
+    plot and exit cleanly within one poll_interval.
+
+    Example usage::
+
+        from adapt.visualization.plotter import PlotConsumer
+        from adapt.core import DataRepository
+
+        repo = DataRepository(run_id="abc123", base_dir="/data", radar_id="KDIX")
+        stop_event = threading.Event()
+
+        consumer = PlotConsumer(
+            repository=repo,
+            stop_event=stop_event,
+            output_dir=Path("/data/KDIX/plots"),
+            poll_interval=2.0
+        )
+        consumer.start()
+
+        # ... pipeline runs ...
+
+        stop_event.set()
+        consumer.join(timeout=10)
+    """
+
+    def __init__(
+        self,
+        repository: "DataRepository",
+        stop_event: threading.Event,
+        output_dir: Path,
+        config: "InternalConfig" = None,
+        poll_interval: float = 2.0,
+        show_live: bool = False,
+        name: str = "PlotConsumer"
+    ):
+        """Initialize plot consumer.
+
+        Parameters
+        ----------
+        repository : DataRepository
+            Repository to poll for new artifacts. Must be initialized
+            and connected to the same catalog as the processor.
+        stop_event : threading.Event
+            Shared event to signal shutdown. Set this to stop the consumer.
+        output_dir : Path
+            Directory to save generated plots.
+        config : InternalConfig, optional
+            Configuration for plot styling and parameters.
+        poll_interval : float
+            Seconds between repository polls (default: 2.0).
+        show_live : bool
+            If True, display plots in a matplotlib window (default: False).
+        name : str
+            Thread name for logging.
+        """
+        super().__init__(name=name, daemon=True)
+
+        self.repository = repository
+        self.stop_event = stop_event
+        self.output_dir = Path(output_dir)
+        self.config = config
+        self.poll_interval = poll_interval
+        self.show_live = show_live
+
+        # Initialize plotter
+        self.plotter = RadarPlotter(config=config, show_plots=show_live)
+
+        # Track last processed artifact to detect new ones
+        self._last_seen_id: Optional[str] = None
+        self._processed_count = 0
+
+        # Import ProductType here to avoid circular imports
+        from adapt.core import ProductType
+        self._product_type = ProductType.ANALYSIS_NC
+
+        logger.info(f"{name} initialized (poll_interval={poll_interval}s, output_dir={output_dir})")
+
+    def run(self):
+        """Main consumer loop - poll repository and generate plots."""
+        logger.info(f"{self.name} started, polling for new analysis artifacts...")
+
+        # Setup matplotlib for live display if requested
+        if self.show_live:
+            try:
+                plt.ion()  # Interactive mode
+            except Exception as e:
+                logger.warning(f"Could not enable interactive plotting: {e}")
+                self.show_live = False
+
+        while not self.stop_event.is_set():
+            try:
+                self._poll_and_process()
+            except Exception as e:
+                logger.error(f"Error in {self.name}: {e}", exc_info=True)
+
+            # Wait for next poll (interruptible)
+            self.stop_event.wait(timeout=self.poll_interval)
+
+        logger.info(f"{self.name} stopped (processed {self._processed_count} plots)")
+
+    def _poll_and_process(self):
+        """Check for new artifacts and process them."""
+        try:
+            # Get latest analysis artifact
+            latest = self.repository.get_latest(self._product_type)
+
+            if latest is None:
+                # No artifacts yet
+                return
+
+            artifact_id = latest['artifact_id']
+
+            # Check if this is a new artifact
+            if artifact_id == self._last_seen_id:
+                return
+
+            # Process new artifact
+            logger.info(f"New analysis artifact detected: {artifact_id}")
+            self._process_artifact(latest)
+            self._last_seen_id = artifact_id
+
+        except Exception as e:
+            logger.error(f"Error polling repository: {e}", exc_info=True)
+
+    def _process_artifact(self, artifact: Dict):
+        """Generate plot from artifact."""
+        artifact_id = artifact['artifact_id']
+        file_path = Path(artifact['file_path'])
+        scan_time_str = artifact.get('scan_time')
+
+        try:
+            # Parse scan time
+            if scan_time_str:
+                scan_time = datetime.fromisoformat(scan_time_str)
+            else:
+                scan_time = datetime.now(timezone.utc)
+
+            # Load dataset from repository
+            ds = self.repository.open_dataset(artifact_id)
+
+            try:
+                # Generate output path
+                radar_id = artifact.get('radar_id', self.repository.radar_id)
+                date_str = scan_time.strftime("%Y%m%d")
+                time_str = scan_time.strftime("%H%M%S")
+
+                plot_dir = self.output_dir / date_str
+                plot_dir.mkdir(parents=True, exist_ok=True)
+
+                output_path = plot_dir / f"{radar_id}_reflectivity_{time_str}.png"
+
+                # Generate plot
+                plot_file = self.plotter.plot_reflectivity_with_cells(
+                    ds=ds,
+                    output_path=output_path
+                )
+
+                self._processed_count += 1
+                logger.info(f"Plot saved: {plot_file} (total: {self._processed_count})")
+
+                # Show live if enabled
+                if self.show_live:
+                    try:
+                        plt.pause(0.1)
+                    except Exception:
+                        pass
+
+                # Print table statistics
+                self._print_table_stats()
+
+            finally:
+                ds.close()
+
+        except FileNotFoundError as e:
+            logger.warning(f"Artifact file not found: {e}")
+        except Exception as e:
+            logger.error(f"Error processing artifact {artifact_id}: {e}", exc_info=True)
+
+    def _print_table_stats(self):
+        """Print latest cell statistics from repository."""
+        try:
+            from adapt.core import ProductType
+
+            # Get latest cells database
+            cells_db = self.repository.get_latest(ProductType.CELLS_DB)
+            if cells_db is None:
+                return
+
+            # Load table
+            df = self.repository.open_table(cells_db['artifact_id'], table_name='cells')
+
+            if df.empty:
+                return
+
+            # Get most recent cells (last scan)
+            if 'time' in df.columns:
+                df['time'] = pd.to_datetime(df['time'])
+                latest_time = df['time'].max()
+                recent = df[df['time'] == latest_time]
+            else:
+                recent = df.tail(10)
+
+            # Print summary statistics
+            num_cells = len(recent)
+            if num_cells == 0:
+                return
+
+            # Build stats summary
+            stats_parts = [f"Cells: {num_cells}"]
+
+            if 'cell_area_sqkm' in recent.columns:
+                area = recent['cell_area_sqkm'].dropna()
+                if len(area) > 0:
+                    stats_parts.append(f"Area: {area.mean():.1f} km2 (mean)")
+
+            if 'radar_reflectivity_mean' in recent.columns:
+                refl_mean = recent['radar_reflectivity_mean'].dropna()
+                if len(refl_mean) > 0:
+                    stats_parts.append(f"Refl: {refl_mean.mean():.1f} dBZ (mean)")
+
+            if 'radar_reflectivity_max' in recent.columns:
+                refl_max = recent['radar_reflectivity_max'].dropna()
+                if len(refl_max) > 0:
+                    stats_parts.append(f"Max: {refl_max.max():.1f} dBZ")
+
+            summary = " | ".join(stats_parts)
+            logger.info(f"Cell Stats: {summary}")
+
+            # Print detailed table for small number of cells
+            if num_cells <= 5:
+                print("\n" + "=" * 60)
+                print("Latest Cell Statistics:")
+                print("-" * 60)
+
+                cols_to_show = ['cell_label', 'cell_area_sqkm',
+                               'radar_reflectivity_mean', 'radar_reflectivity_max']
+                cols_available = [c for c in cols_to_show if c in recent.columns]
+
+                if cols_available:
+                    display_df = recent[cols_available].copy()
+                    display_df.columns = ['Label', 'Area (km2)', 'Mean dBZ', 'Max dBZ'][:len(cols_available)]
+                    print(display_df.to_string(index=False))
+
+                print("=" * 60 + "\n")
+
+        except Exception as e:
+            logger.debug(f"Could not print table stats: {e}")
+
+    def stop(self):
+        """Signal consumer to stop."""
+        self.stop_event.set()
 
 
 if __name__ == "__main__":

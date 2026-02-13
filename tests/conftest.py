@@ -9,7 +9,11 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from adapt.schemas import ParamConfig, UserConfig, CLIConfig, InternalConfig, resolve_config
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.user import UserConfig  
+from adapt.schemas.cli import CLIConfig
+from adapt.schemas.internal import InternalConfig
+from adapt.schemas.resolve import resolve_config
 
 
 # =============================================================================
@@ -24,7 +28,7 @@ def param_config():
     using user_config or by creating custom UserConfig instances.
     """
     # For tests, provide a default radar_id since it's required at runtime
-    from adapt.schemas import ParamConfig as PC
+    from adapt.schemas.param import ParamConfig as PC
     
     config = PC()
     # Override radar_id with a test default

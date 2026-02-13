@@ -1,13 +1,31 @@
 """Configuration resolution and merging logic.
 
-This module provides the single entrypoint for configuration resolution:
-resolve_config(). It merges ParamConfig, UserConfig, and CLIConfig in
-the correct precedence order and returns a validated InternalConfig.
+This module provides the SINGLE AUTHORITATIVE ENTRYPOINT for configuration 
+resolution: resolve_config(). It merges ParamConfig, UserConfig, and CLIConfig 
+in the correct precedence order and returns a validated InternalConfig.
 
 Precedence (highest to lowest):
-1. CLIConfig (command-line overrides)
-2. UserConfig (user file)
+1. CLIConfig (command-line overrides) 
+2. UserConfig (user file overrides)
 3. ParamConfig (expert defaults)
+
+Merge Semantics:
+- Nested dictionaries: recursively merged (child keys from higher-priority 
+  configs override lower-priority configs)
+- Lists: completely REPLACED (higher-priority list replaces entire 
+  lower-priority list; no concatenation)
+- Other values: replaced
+
+Special Cases:
+- analyzer.exclude_fields: UNIONED (default excludes + user excludes)
+- projector.max_projection_steps: capped at 10 for safety
+- mode inference: auto-set to 'historical' if start_time/end_time provided 
+  but no explicit mode
+
+Example precedence:
+- ParamConfig: {"radar_variables": ["A", "B"], "threshold": 30}
+- UserConfig: {"radar_variables": ["C"], "threshold": 40}
+- Result: {"radar_variables": ["C"], "threshold": 40}  # List replaced
 """
 
 from typing import Union, Optional, Any

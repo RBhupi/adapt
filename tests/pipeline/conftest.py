@@ -6,9 +6,12 @@ import shutil
 from datetime import datetime
 
 from adapt.pipeline.file_tracker import FileProcessingTracker
-from adapt.schemas import ParamConfig, InternalConfig, UserConfig
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.internal import InternalConfig  
+from adapt.schemas.user import UserConfig
 from adapt.schemas.resolve import resolve_config
 from adapt.setup_directories import setup_output_directories
+from adapt.core import DataRepository
 
 
 @pytest.fixture
@@ -30,10 +33,17 @@ def pipeline_config(temp_dir) -> InternalConfig:
     param = ParamConfig()
     # For tests, provide defaults since radar_id and base_dir are required at runtime
     user = UserConfig(
-        radar_id="TEST_RADAR",
+        radar_id="TEST_RADAR", 
         base_dir=str(temp_dir)
     )
-    return resolve_config(param, user, None)
+    config_dict = resolve_config(param, user, None).model_dump()
+    
+    # Add required fields for new architecture
+    output_dirs = setup_output_directories(str(temp_dir))
+    config_dict["output_dirs"] = {k: str(v) for k, v in output_dirs.items()}
+    config_dict["run_id"] = DataRepository.generate_run_id()
+    
+    return InternalConfig.model_validate(config_dict)
 
 
 @pytest.fixture

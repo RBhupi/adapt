@@ -6,7 +6,9 @@ import xarray as xr
 import tempfile
 import shutil
 from pathlib import Path
-from adapt.schemas import ParamConfig, InternalConfig, UserConfig
+from adapt.schemas.param import ParamConfig
+from adapt.schemas.internal import InternalConfig
+from adapt.schemas.user import UserConfig
 from adapt.schemas.resolve import resolve_config
 from adapt.setup_directories import setup_output_directories
 

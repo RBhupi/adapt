@@ -1,6 +1,6 @@
 import pytest
 
-from adapt.schemas import UserConfig
+from adapt.schemas.user import UserConfig
 
 
 def test_uppercase_keys_are_handled():

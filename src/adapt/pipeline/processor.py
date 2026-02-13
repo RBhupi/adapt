@@ -116,8 +116,7 @@ class RadarProcessor(threading.Thread):
 
     def __init__(self, input_queue: queue.Queue, config: "InternalConfig",
                  output_dirs: Dict[str, Path],
-                 output_queue: queue.Queue = None,
-                 file_tracker = None,
+                 file_tracker=None,
                  repository: Optional[DataRepository] = None,
                  name: str = "RadarProcessor"):
         """Initialize processor with validated configuration.
@@ -130,7 +129,7 @@ class RadarProcessor(threading.Thread):
 
         config : InternalConfig
             Fully validated runtime configuration.
-            
+
         output_dirs : dict
             Output directory paths (from setup_output_directories):
             - nexrad: NEXRAD Level-II files
@@ -139,17 +138,12 @@ class RadarProcessor(threading.Thread):
             - plots: Visualization PNG files
             - logs: Log files
 
-        output_queue : queue.Queue, optional
-            Queue to send analysis files to plotter thread. One dict per file:
-            
-            - `segmentation_nc`: Path to analysis NetCDF file
-            - `radar_id`: Radar identifier
-            - `timestamp`: Datetime of the scan
-            
-            If None, no plotting occurs (analysis-only mode).
-            
         file_tracker : FileProcessingTracker, optional
             Optional file processing tracker to skip already completed files.
+
+        repository : DataRepository, optional
+            Data repository for artifact management. Plotting consumers
+            poll the repository directly for new artifacts.
 
         name : str, optional
             Thread name for logging (default: "RadarProcessor").
@@ -164,7 +158,6 @@ class RadarProcessor(threading.Thread):
         self.input_queue = input_queue
         self.config = config
         self.output_dirs = output_dirs
-        self.output_queue = output_queue  # For plotter thread
         self.file_tracker = file_tracker
         self.repository = repository
         self._stop_event = threading.Event()
@@ -376,12 +369,8 @@ class RadarProcessor(threading.Thread):
             file_id = Path(filepath).stem
             tracker = self.file_tracker
             if tracker and tracker.should_process(file_id, "analyzed") is False:
-                if tracker.should_process(file_id, "plotted") is False:
-                    logger.info("Skipping already completed: %s", Path(filepath).name)
-                    return True
-                else:
-                    self._requeue_for_plotting(file_id, filepath)
-                    return True
+                logger.info("Skipping already analyzed: %s", Path(filepath).name)
+                return True
 
             logger.info("Processing: %s", Path(filepath).name)
 
@@ -404,22 +393,10 @@ class RadarProcessor(threading.Thread):
             if len(self.dataset_history) >= 2:
                 assert_projected(ds_2d, self.config.projector.max_projection_steps)
 
-            # Step 4: Save segmentation NetCDF for visualization (no dependency on analysis)
+            # Step 4: Save segmentation NetCDF (repository registers artifact for consumers)
             seg_nc_path = self._save_segmentation_netcdf(ds_2d, filepath, scan_time)
-            if seg_nc_path and self.output_queue:
-                try:
-                    item = {
-                        'segmentation_nc': seg_nc_path,
-                        'gridnc_file': None,
-                        'radar_id': self.config.downloader.radar_id,
-                        'timestamp': scan_time,
-                    }
-                    self.output_queue.put_nowait(item)
-                    logger.debug(f"Pushed to plotter queue: {seg_nc_path}")
-                except queue.Full:
-                    logger.debug("Plotter queue full, skipping frame")
 
-            # Step 5: Analyze (parallel with visualization - no dependency)
+            # Step 5: Analyze and save cell statistics
             result = self._analyze_and_save(ds_2d, filepath, nc_full_path, num_cells, scan_time)
             return result
 
@@ -440,38 +417,6 @@ class RadarProcessor(threading.Thread):
                 file_id = Path(filepath).stem
                 tracker.mark_stage_complete(file_id, "analyzed", error=str(e))
             return False
-
-    def _requeue_for_plotting(self, file_id, filepath):
-        logger.info("Already analyzed, re-queuing for plot: %s", Path(filepath).name)
-        radar_id = self.config.downloader.radar_id
-        if self.output_queue:
-            from adapt.setup_directories import get_analysis_path
-            from datetime import datetime, timezone
-            try:
-                parts = file_id.split('_')
-                datetime_str = parts[0][-8:] + parts[1]
-                scan_time = datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-            except:
-                scan_time = datetime.now(timezone.utc)
-            seg_nc_path = get_analysis_path(
-                output_dirs=self.output_dirs,
-                radar_id=radar_id,
-                analysis_type="segmentation",
-                timestamp=scan_time,
-                filename=f"{file_id}_analysis.nc"
-            )
-            if seg_nc_path.exists():
-                try:
-                    item = {
-                        'segmentation_nc': seg_nc_path,
-                        'gridnc_file': None,
-                        'radar_id': radar_id,
-                        'timestamp': scan_time,
-                    }
-                    self.output_queue.put_nowait(item)
-                    logger.debug("Re-queued for plotting: %s", seg_nc_path.name)
-                except queue.Full:
-                    pass
 
     def _load_and_regrid(self, filepath):
         """Load and regrid radar file, return ds, ds_2d, nc_full_path, scan_time."""
